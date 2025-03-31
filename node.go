@@ -115,6 +115,8 @@ func NewServer(id string, nodes []string, followerToCandidateFunc func(msg map[s
 			case LEADER:
 				msg := s.leader.GetHeartbeatMessage(s, s.id)
 				leaderHeartbeatFunc(msg)
+				s.resetLeaderTimeout()
+				return
 			}
 			s.resetElectionTimeout()
 			s.mutex.Unlock()
@@ -139,6 +141,11 @@ func (s *Server) becomeCandidate(followerToCandidateFunc func(msg map[string]int
 // resetElectionTimeout resets the election timer with a random duration
 func (s *Server) resetElectionTimeout() {
 	value := rand.Intn(151) + 150
+	s.timer.Reset(time.Millisecond * time.Duration(value))
+}
+
+func (s *Server) resetLeaderTimeout() {
+	value := rand.Intn(30) + 30
 	s.timer.Reset(time.Millisecond * time.Duration(value))
 }
 
