@@ -21,7 +21,7 @@ func followerToCandidate(msg map[string]interface{}) {
 }
 
 func leaderHeartbeat(msg map[string]interface{}) {
-	println("Sending heartbeat")
+	println("Sending heartbeat with {}", msg["leader_id"])
 	msg["type"] = "append_entries"
 	for _, node := range nodeIDs {
 		if node == nodeID {
@@ -88,7 +88,14 @@ func main() {
 
 			// if error might mean something that I did not account for
 			if msgType == ERROR {
-				break
+				var msg2 MessageInternal = msg
+				if originalMsg != nil {
+					msg2 = *originalMsg
+				}
+
+				reply(msg2, map[string]interface{}{
+					"type": "error",
+				})
 			}
 
 			// em caso de write ok, temos de fazer append entries aos followers e só
@@ -118,7 +125,12 @@ func main() {
 			key := fmt.Sprintf("%v", keyFloat)
 			ec, value := server.Read(key)
 			if ec == NOT_LEADER {
-				send(server.id, server.leaderId, map[string]interface{}{
+				leaderId := server.leaderId
+				if leaderId == "" {
+					randomNode := nodeIDs[rand.Intn(len(nodeIDs))]
+					leaderId = randomNode
+				}
+				send(server.id, leaderId, map[string]interface{}{
 					"type":  "read",
 					"key":   body["key"],
 					"value": body["value"],
@@ -127,33 +139,72 @@ func main() {
 			if originalMsg != nil {
 				reply(*originalMsg, map[string]interface{}{
 					"type":  "read_ok",
-					"key":   key,
 					"value": value,
 				})
 				break
 			}
 			reply(msg, map[string]interface{}{
 				"type":  "read_ok",
-				"key":   key,
 				"value": value,
 			})
 			break
 
 		case "append_entries":
 			println("Received append entry")
+
+			// Check 'term'
+			term, ok := body["term"].(float64)
+			if !ok {
+				log.Printf("Missing or invalid 'term' in append_entries message")
+				continue
+			}
+
+			// Check 'leader_id'
+			leaderID, ok := body["leader_id"].(string)
+			if !ok {
+				log.Printf("Missing or invalid 'leader_id' in append_entries message")
+				continue
+			}
+
+			// Check 'prev_log_index'
+			prevLogIndex, ok := body["prev_log_index"].(float64)
+			if !ok {
+				log.Printf("Missing or invalid 'prev_log_index' in append_entries message")
+				continue
+			}
+
+			// Check 'prev_log_term'
+			prevLogTerm, ok := body["prev_log_term"].(float64)
+			if !ok {
+				log.Printf("Missing or invalid 'prev_log_term' in append_entries message")
+				continue
+			}
+
+			// Check 'leader_commit'
+			leaderCommit, ok := body["leader_commit"].(float64)
+			if !ok {
+				log.Printf("Missing or invalid 'leader_commit' in append_entries message")
+				continue
+			}
+
+			// Process entries (already safely handled in processEntries)
 			entriesRaw := body["entries"]
 			entries := processEntries(entriesRaw)
+
+			// Construct the AppendEntriesRequest
 			ap := AppendEntriesRequest{
-				Term:         int(body["term"].(float64)),
-				LeaderID:     body["leader_id"].(string),
-				PrevLogIndex: int(body["prev_log_index"].(float64)),
-				PrevLogTerm:  int(body["prev_log_term"].(float64)),
+				Term:         int(term),
+				LeaderID:     leaderID,
+				PrevLogIndex: int(prevLogIndex),
+				PrevLogTerm:  int(prevLogTerm),
 				Entries:      entries,
-				LeaderCommit: int(body["leader_commit"].(float64)),
+				LeaderCommit: int(leaderCommit),
 			}
-			body := server.AppendEntries(ap)
-			body["type"] = "append_entries_ok"
-			reply(msg, body)
+
+			// Call AppendEntries and reply
+			respBody := server.AppendEntries(ap)
+			respBody["type"] = "append_entries_ok"
+			reply(msg, respBody)
 			break
 
 		case "append_entries_ok":
@@ -196,7 +247,7 @@ func main() {
 			voteGranted := body["vote_granted"].(bool)
 			term := int(body["term"].(float64))
 			voterID := msg.Src
-			server.candidate.HandleVoteResponse(voterID, term, voteGranted)
+			server.candidate.HandleVoteResponse(server, voterID, term, voteGranted)
 
 		}
 	}

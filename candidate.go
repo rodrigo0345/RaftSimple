@@ -56,7 +56,7 @@ func (c *Candidate) AcceptVote(voterId string, term int, success bool) bool {
 	return countVotes >= c.NeededVotes
 }
 
-func (c *Candidate) HandleVoteResponse(voterId string, term int, voteGranted bool) {
+func (c *Candidate) HandleVoteResponse(s *Server, voterId string, term int, voteGranted bool) {
 	// If the response term is higher, step down to follower
 	if term > c.node.currentTerm {
 		c.node.currentTerm = term
@@ -91,7 +91,7 @@ func (c *Candidate) HandleVoteResponse(voterId string, term int, voteGranted boo
 		c.node.timer.Stop()
 		// Send an immediate heartbeat to assert leadership
 		go func() {
-			heartbeatMsg := c.node.leader.GetHeartbeatMessage(c.node.id)
+			heartbeatMsg := c.node.leader.GetHeartbeatMessage(s, c.node.id)
 			leaderHeartbeat(heartbeatMsg)
 		}()
 	}

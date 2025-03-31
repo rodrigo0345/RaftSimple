@@ -113,7 +113,7 @@ func NewServer(id string, nodes []string, followerToCandidateFunc func(msg map[s
 				msg := s.candidate.StartElection(s.id)
 				candidateStartNewElection(msg)
 			case LEADER:
-				msg := s.leader.GetHeartbeatMessage(s.id)
+				msg := s.leader.GetHeartbeatMessage(s, s.id)
 				leaderHeartbeatFunc(msg)
 			}
 			s.resetElectionTimeout()

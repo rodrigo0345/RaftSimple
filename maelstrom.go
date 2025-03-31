@@ -27,6 +27,10 @@ type InitBody struct {
 }
 
 func send(src, dest string, body map[string]interface{}, originalMsg *MessageInternal) {
+	if src == dest {
+		log.Printf("Skipping self-send from %s to %s: %v", src, dest, body)
+		return
+	}
 	msgID++
 	data := map[string]interface{}{
 		"src":  src,
@@ -35,13 +39,36 @@ func send(src, dest string, body map[string]interface{}, originalMsg *MessageInt
 			"msg_id": msgID,
 		},
 	}
+	// Copy fields from the provided body
 	for k, v := range body {
 		data["body"].(map[string]interface{})[k] = v
 	}
+	// If originalMsg is provided, include it without its own original_msg field
 	if originalMsg != nil {
-		data["body"].(map[string]interface{})["original_msg"] = originalMsg
+		var origBody map[string]interface{}
+		if err := json.Unmarshal(originalMsg.Body, &origBody); err != nil {
+			log.Printf("Error unmarshaling originalMsg body: %v", err)
+		} else {
+			delete(origBody, "original_msg")
+			cleanedOriginalMsg := MessageInternal{
+				Src:  originalMsg.Src,
+				Dest: originalMsg.Dest,
+				Body: json.RawMessage{},
+			}
+			cleanedBody, err := json.Marshal(origBody)
+			if err != nil {
+				log.Printf("Error marshaling cleaned originalMsg body: %v", err)
+			} else {
+				cleanedOriginalMsg.Body = cleanedBody
+				data["body"].(map[string]interface{})["original_msg"] = cleanedOriginalMsg
+			}
+		}
 	}
-	jsonData, _ := json.Marshal(data)
+	jsonData, err := json.Marshal(data)
+	if err != nil {
+		log.Printf("Error marshaling message: %v", err)
+		return
+	}
 	log.Printf("sending %s", jsonData)
 	fmt.Println(string(jsonData))
 }
@@ -81,13 +108,11 @@ func initNode(msg MessageInternal) {
 }
 
 func DecodeMessage(msg string) (MessageInternal, map[string]interface{}, *MessageInternal) {
-	// Define a temporary struct to hold all fields
 	var fullMsg struct {
-		MessageInternal
-		OriginalMsg *MessageInternal `json:"original_msg"`
+		Src  string          `json:"src"`
+		Dest string          `json:"dest"`
+		Body json.RawMessage `json:"body"`
 	}
-
-	// Unmarshal the JSON string into fullMsg
 	if err := json.Unmarshal([]byte(msg), &fullMsg); err != nil {
 		log.Printf("Error unmarshaling message: %v", err)
 		panic("Error unmarshaling message in DecodeMessage")
@@ -99,20 +124,25 @@ func DecodeMessage(msg string) (MessageInternal, map[string]interface{}, *Messag
 		panic("Error unmarshaling message in DecodeMessage")
 	}
 
-	// Safely check if original_msg exists in bodyMap
 	var originalMsg *MessageInternal
 	if val, ok := bodyMap["original_msg"]; ok {
-		if casted, ok := val.(*MessageInternal); ok {
-			originalMsg = casted
+		origMsgBytes, err := json.Marshal(val)
+		if err != nil {
+			log.Printf("Error marshaling original_msg: %v", err)
 		} else {
-			log.Printf("Type assertion failed for original_msg: %v", val)
-			originalMsg = nil // Default to nil if type assertion fails
+			var origMsg MessageInternal
+			if err := json.Unmarshal(origMsgBytes, &origMsg); err != nil {
+				log.Printf("Error unmarshaling original_msg: %v", err)
+			} else {
+				originalMsg = &origMsg
+			}
 		}
-	} else {
-		originalMsg = nil // Return nil if original_msg is not present
 	}
 
-	// Return the embedded MessageInternal as Header,
-	// the Body as json.RawMessage, and the OriginalMsg as *MessageInternal
-	return fullMsg.MessageInternal, bodyMap, originalMsg
+	header := MessageInternal{
+		Src:  fullMsg.Src,
+		Dest: fullMsg.Dest,
+		Body: fullMsg.Body,
+	}
+	return header, bodyMap, originalMsg
 }

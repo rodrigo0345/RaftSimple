@@ -15,10 +15,16 @@ func NewLeader() *Leader {
 	}
 }
 
-func (l *Leader) GetHeartbeatMessage(id string) map[string]interface{} {
+func (l *Leader) GetHeartbeatMessage(s *Server, id string) map[string]interface{} {
 	return map[string]interface{}{
-		"type":      "heartbeat",
-		"leader_id": id,
+		"type":      "append_entries",
+		"leader_id": id,                     // Ensure this is set
+		"term":      float64(s.currentTerm), // Exam
+		// acho que prev_log_index nap interessa
+		"prev_log_index": float64(s.lastApplied), // Adjust accordingly
+		"prev_log_term":  float64(s.currentTerm), // Adjust accordingly
+		"leader_commit":  float64(s.commitIndex), // Adjust accordingly
+		"entries":        []LogEntry{},
 	}
 }
 
