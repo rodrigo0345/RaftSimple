@@ -1,88 +1,126 @@
 package main
 
+import "strings"
+
 type Follower struct {
-	id string
-	// for each node there is a nextIndex
 	nextIndex  map[int]int
 	matchIndex map[int]int
-	node       *Server
-  ellectionTimeout int
 }
 
-func NewFollower(nodeInfo *Server) *Follower {
+func NewFollower() *Follower {
 	return &Follower{
-		id:         nodeInfo.id,
 		nextIndex:  map[int]int{},
 		matchIndex: map[int]int{},
-		node:       nodeInfo,
 	}
 }
 
-func (f *Follower) AppendEntries(leaderTerm int, leaderId int, prevLogIndex int, prevLogTerm int, leaderCommit int, entries []*LogEntry) (int, bool) {
-    // Update term if leader's term is newer
-    if leaderTerm > f.node.currentTerm {
-        f.node.currentTerm = leaderTerm
-    }
-    // Reject if leader's term is outdated
-    if leaderTerm < f.node.currentTerm {
-        return f.node.currentTerm, false
-    }
-    // Check log consistency at prevLogIndex
-    if prevLogIndex > 0 && (prevLogIndex > len(f.node.log) || f.node.log[prevLogIndex-1].term != prevLogTerm) {
-        return f.node.currentTerm, false
-    }
-    // Truncate log after prevLogIndex
-    if prevLogIndex < len(f.node.log) {
-        f.node.log = f.node.log[:prevLogIndex]
-    }
-    // Append new entries
-    f.node.log = append(f.node.log, entries...)
-    // Update commit index
-    if leaderCommit > f.node.commitIndex {
-        var lastIndex int
-        if len(f.node.log) > 0 {
-            lastIndex = f.node.log[len(f.node.log)-1].index
-        } else {
-            lastIndex = 0
-        }
-        if leaderCommit < lastIndex {
-            f.node.commitIndex = leaderCommit
-        } else {
-            f.node.commitIndex = lastIndex
-        }
-    }
-    // Success
-    return f.node.currentTerm, true
+func (f *Follower) BecomeCandidate(id string, currentTerm int, lastLogTerm int, lastLogIndex int) map[string]interface{} {
+	msg := map[string]interface{}{
+		"type":           "request_vote",
+		"term":           currentTerm,
+		"candidate_id":   id,
+		"last_log_index": lastLogIndex,
+		"last_log_term":  lastLogTerm,
+	}
+	return msg
 }
 
-func (f *Follower) RequestVote(candidateTerm int, candidateId int, lastLogIndex int, lastLogTerm int) (int, bool) {
-    // Reject if candidate's term is outdated
-    if candidateTerm < f.node.currentTerm {
-        return f.node.currentTerm, false
-    }
-    // Update term if candidate's term is newer
-    if candidateTerm > f.node.currentTerm {
-        f.node.currentTerm = candidateTerm
-        f.node.votedFor = 0
-    }
-    // Check if already voted for another candidate in this term
-    if f.node.votedFor != 0 && f.node.votedFor != candidateId {
-        return f.node.currentTerm, false
-    }
-    // Determine follower's last log term and index
-    var followerLastTerm, followerLastIndex int
-    if len(f.node.log) > 0 {
-        followerLastTerm = f.node.log[len(f.node.log)-1].term
-        followerLastIndex = f.node.log[len(f.node.log)-1].index
-    } else {
-        followerLastTerm = 0
-        followerLastIndex = 0
-    }
-    // Check if candidate's log is at least as up-to-date
-    if lastLogTerm < followerLastTerm || (lastLogTerm == followerLastTerm && lastLogIndex < followerLastIndex) {
-        return f.node.currentTerm, false
-    }
-    // Grant vote
-    f.node.votedFor = candidateId
-    return f.node.currentTerm, true
+func (f *Follower) AppendEntries(s *Server, msg AppendEntriesRequest) map[string]interface{} {
+	response := make(map[string]interface{})
+
+	// message can be ignored that is from the past
+	if msg.Term < s.currentTerm {
+		response["term"] = s.currentTerm
+		response["success"] = false
+		return response
+	}
+
+	if s.currentState == LEADER && msg.Term == s.currentTerm {
+		response["term"] = s.currentTerm
+		response["success"] = false
+		return response
+	}
+
+	s.currentTerm = msg.Term
+	s.votedFor = ""
+	s.currentState = FOLLOWER
+	s.leaderId = msg.LeaderID
+	s.resetElectionTimeout()
+
+	if len(msg.Entries) == 0 {
+		response["success"] = true
+		return response
+	}
+
+	// as entries não encaixam com o log deste follower
+	if msg.PrevLogIndex >= len(s.log) ||
+		(msg.PrevLogIndex >= 0 && s.log[msg.PrevLogIndex].Term != msg.PrevLogTerm) {
+
+		response["term"] = s.currentTerm
+		response["success"] = false
+		return response
+	}
+
+	// neste caso, está tudo perfeito e podemos fazer append das entries ao log
+	index := msg.PrevLogIndex + 1
+
+	// temos de perder mensagens caso o log tenha demasiadas entradas que o lider não viu
+	if index < len(s.log) {
+		s.log = s.log[:index]
+	}
+	s.log = append(s.log, msg.Entries...)
+
+	// podemos dar commit a mais mensagens, caso o lider tenha dado commit a mensagens que o follower não deu
+	if msg.LeaderCommit > s.commitIndex {
+		lastNewEntryIndex := msg.PrevLogIndex + len(msg.Entries)
+		if msg.LeaderCommit < lastNewEntryIndex {
+			s.commitIndex = msg.LeaderCommit
+		} else {
+			s.commitIndex = lastNewEntryIndex
+		}
+
+		// aplica tudo que tenha sido commit à máquina de estados do follower
+		for i := s.lastApplied + 1; i <= s.commitIndex; i++ {
+			parts := strings.Split(s.log[i].Command, " ")
+			if parts[0] == "write" && len(parts) == 3 {
+				s.stateMachine.kv[parts[1]] = parts[2]
+			}
+			s.lastApplied = i
+		}
+	}
+	response["success"] = true
+	response["term"] = s.currentTerm
+	return response
+}
+
+func (f *Follower) Vote(s *Server, msg RequestVoteRequest) map[string]interface{} {
+	response := make(map[string]interface{})
+	if msg.Term < s.currentTerm {
+		response["term"] = s.currentTerm
+		response["vote_granted"] = false
+		return response
+	}
+	if msg.Term > s.currentTerm {
+		s.currentTerm = msg.Term
+		s.votedFor = ""
+		s.currentState = FOLLOWER
+	}
+	if s.votedFor == "" || s.votedFor == msg.CandidateID {
+		lastLogIndex := len(s.log) - 1
+		lastLogTerm := 0
+		if lastLogIndex >= 0 {
+			lastLogTerm = s.log[lastLogIndex].Term
+		}
+		if msg.LastLogTerm > lastLogTerm || (msg.LastLogTerm == lastLogTerm && msg.LastLogIndex >= lastLogIndex) {
+			s.votedFor = msg.CandidateID
+			response["vote_granted"] = true
+			s.resetElectionTimeout()
+		} else {
+			response["vote_granted"] = false
+		}
+	} else {
+		response["vote_granted"] = false
+	}
+	response["term"] = s.currentTerm
+	return response
 }
