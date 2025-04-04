@@ -108,7 +108,7 @@ func NewServer(id string, nodes []string, followerToCandidateFunc func(msg map[s
 			s.mutex.Lock()
 			switch s.currentState {
 			case FOLLOWER:
-				s.becomeCandidate(leaderHeartbeatFunc)
+				s.becomeCandidate(candidateStartNewElection)
 			case CANDIDATE:
 				msg := s.candidate.StartElection(s.id)
 				candidateStartNewElection(msg)
@@ -116,7 +116,7 @@ func NewServer(id string, nodes []string, followerToCandidateFunc func(msg map[s
 				msg := s.leader.GetHeartbeatMessage(s, s.id)
 				leaderHeartbeatFunc(msg)
 				s.resetLeaderTimeout()
-				return
+				break
 			}
 			s.resetElectionTimeout()
 			s.mutex.Unlock()

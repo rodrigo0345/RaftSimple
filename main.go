@@ -10,7 +10,7 @@ import (
 )
 
 func followerToCandidate(msg map[string]interface{}) {
-	println("Sending heartbeat")
+	println("[" + nodeID + "] Sending follower to candidate")
 	msg["type"] = "request_vote"
 	for _, node := range nodeIDs {
 		if node == nodeID {
@@ -21,7 +21,7 @@ func followerToCandidate(msg map[string]interface{}) {
 }
 
 func leaderHeartbeat(msg map[string]interface{}) {
-	println("Sending heartbeat with {}", msg["leader_id"])
+	println("["+nodeID+"] Sending heartbeat with leader_id:", msg["leader_id"])
 	msg["type"] = "append_entries"
 	for _, node := range nodeIDs {
 		if node == nodeID {
@@ -32,7 +32,7 @@ func leaderHeartbeat(msg map[string]interface{}) {
 }
 
 func candidateStartNewElection(msg map[string]interface{}) {
-	println("Sending heartbeat")
+	println("[" + nodeID + "] Sending new election")
 	msg["type"] = "request_vote"
 	for _, node := range nodeIDs {
 		if node == nodeID {
