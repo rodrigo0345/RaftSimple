@@ -7,7 +7,10 @@ import (
 	"log"
 	"math/rand"
 	"os"
+	"strconv"
 )
+
+var server *Server
 
 func followerToCandidate(msg map[string]interface{}) {
 	println("[" + nodeID + "] Sending follower to candidate")
@@ -21,7 +24,11 @@ func followerToCandidate(msg map[string]interface{}) {
 }
 
 func leaderHeartbeat(msg map[string]interface{}) {
-	println("["+nodeID+"] Sending heartbeat with leader_id:", msg["leader_id"])
+
+	if server != nil {
+		println("["+nodeID+"] Sending heartbeat with leader_id:", server.leaderId)
+	}
+
 	msg["type"] = "append_entries"
 	for _, node := range nodeIDs {
 		if node == nodeID {
@@ -32,7 +39,10 @@ func leaderHeartbeat(msg map[string]interface{}) {
 }
 
 func candidateStartNewElection(msg map[string]interface{}) {
-	println("[" + nodeID + "] Sending new election")
+	if server != nil {
+		println("[" + nodeID + "] Sending new election, expecting " + strconv.Itoa(server.majority) + " votes, has: " + strconv.Itoa(len(server.candidate.Votes)))
+	}
+
 	msg["type"] = "request_vote"
 	for _, node := range nodeIDs {
 		if node == nodeID {
@@ -43,7 +53,7 @@ func candidateStartNewElection(msg map[string]interface{}) {
 }
 
 func main() {
-	var server *Server
+
 	scanner := bufio.NewScanner(os.Stdin)
 	for scanner.Scan() {
 		data := scanner.Text()
