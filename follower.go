@@ -49,6 +49,7 @@ func (f *Follower) AppendEntries(s *Server, msg AppendEntriesRequest) map[string
 
 	if len(msg.Entries) == 0 {
 		response["success"] = true
+		response["term"] = s.currentTerm
 		return response
 	}
 
@@ -89,7 +90,7 @@ func (f *Follower) AppendEntries(s *Server, msg AppendEntriesRequest) map[string
 		}
 	}
 	response["success"] = true
-	response["term"] = s.currentTerm
+
 	return response
 }
 

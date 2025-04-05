@@ -86,6 +86,7 @@ func (c *Candidate) HandleVoteResponse(s *Server, voterId string, term int, vote
 	if countVotes >= c.NeededVotes {
 		// Transition to leader
 		c.node.currentState = LEADER
+		println("\033[32m[" + s.id + "] IS NOW THE LEADER\033[0m")
 		c.node.leaderId = c.node.id
 		// Stop the election timer
 		c.node.timer.Stop()

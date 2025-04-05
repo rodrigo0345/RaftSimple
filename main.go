@@ -13,7 +13,9 @@ import (
 var server *Server
 
 func followerToCandidate(msg map[string]interface{}) {
-	println("[" + nodeID + "] Sending follower to candidate")
+	if server != nil {
+		println("[" + nodeID + "] Sending follower to candidate, expecting " + strconv.Itoa(server.majority) + " votes, has: " + strconv.Itoa(len(server.candidate.Votes)))
+	}
 	msg["type"] = "request_vote"
 	for _, node := range nodeIDs {
 		if node == nodeID {
@@ -27,6 +29,8 @@ func leaderHeartbeat(msg map[string]interface{}) {
 
 	if server != nil {
 		println("["+nodeID+"] Sending heartbeat with leader_id:", server.leaderId)
+	} else {
+		println("[" + nodeID + "] Sending initial heartbeat as leader")
 	}
 
 	msg["type"] = "append_entries"
@@ -41,6 +45,8 @@ func leaderHeartbeat(msg map[string]interface{}) {
 func candidateStartNewElection(msg map[string]interface{}) {
 	if server != nil {
 		println("[" + nodeID + "] Sending new election, expecting " + strconv.Itoa(server.majority) + " votes, has: " + strconv.Itoa(len(server.candidate.Votes)))
+	} else {
+		println("[" + nodeID + "] Sending new election, expecting " + strconv.Itoa(msg["majority"].(int)) + " votes, has: " + strconv.Itoa(msg["has"].(int)))
 	}
 
 	msg["type"] = "request_vote"
@@ -68,7 +74,7 @@ func main() {
 		switch msgType {
 		case "init":
 			initNode(msg)
-			server = NewServer(nodeID, nodeIDs, followerToCandidate, leaderHeartbeat, candidateStartNewElection)
+			server = NewServer(nodeID, nodeIDs, leaderHeartbeat, candidateStartNewElection)
 			reply(msg, map[string]interface{}{
 				"type": "init_ok",
 			})

@@ -69,7 +69,7 @@ type Server struct {
 }
 
 // NewServer initializes a new Raft server
-func NewServer(id string, nodes []string, followerToCandidateFunc func(msg map[string]interface{}),
+func NewServer(id string, nodes []string,
 	leaderHeartbeatFunc func(msg map[string]interface{}),
 	candidateStartNewElection func(msg map[string]interface{})) *Server {
 	kv := &KeyValueStore{kv: map[string]string{}}
@@ -96,7 +96,7 @@ func NewServer(id string, nodes []string, followerToCandidateFunc func(msg map[s
 	s.candidate = NewCandidate(s) // Pass server instance to Candidate
 
 	if nodeIDs[0] == s.id {
-		s.becomeCandidate(leaderHeartbeatFunc)
+		s.becomeCandidate(candidateStartNewElection)
 	}
 
 	// wait for replication of the votes
@@ -127,14 +127,9 @@ func NewServer(id string, nodes []string, followerToCandidateFunc func(msg map[s
 
 func (s *Server) becomeCandidate(followerToCandidateFunc func(msg map[string]interface{})) {
 	s.currentState = CANDIDATE
-	s.votedFor = s.id
-	s.currentTerm++
-	lastLogIndex := len(s.log) - 1
-	lastLogTerm := 0
-	if lastLogIndex >= 0 {
-		lastLogTerm = s.log[lastLogIndex].Term
-	}
-	msg := s.follower.BecomeCandidate(s.id, s.currentTerm, lastLogTerm, lastLogIndex)
+	msg := s.candidate.StartElection(s.id)
+	msg["majority"] = s.majority
+	msg["has"] = len(s.candidate.Votes)
 	followerToCandidateFunc(msg)
 }
 
