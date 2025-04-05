@@ -98,8 +98,22 @@ func main() {
 			// redirect to the leader
 			if msgType == NOT_LEADER {
 				if leaderId == "" {
-					randomNode := nodeIDs[rand.Intn(len(nodeIDs))]
-					leaderId = randomNode
+					// Create a list excluding server.id
+					var otherNodes []string
+					for _, node := range nodeIDs {
+						if node != server.id {
+							otherNodes = append(otherNodes, node)
+						}
+					}
+					if len(otherNodes) > 0 {
+						// Select a random node from otherNodes
+						randomNode := otherNodes[rand.Intn(len(otherNodes))]
+						leaderId = randomNode
+					} else {
+						// No other nodes available; handle this case (e.g., log an error)
+						fmt.Println("No other nodes available to forward the message")
+						return
+					}
 				}
 				send(server.id, leaderId, body, &msg)
 			}
@@ -229,10 +243,7 @@ func main() {
 			followerID := msg.Src
 			success := body["success"].(bool)
 			term := int(body["term"].(float64))
-			if originalMsg == nil {
-				// era apenas um heartbeat ent pode-se ignorar
-				return
-			}
+
 			errType, newMsg, _ := server.WaitForReplication(followerID, success, term)
 
 			// ACHO QUE VAI TER UM BUG POR PODER MANDAR VÁRIOS WRITE OK AO MM CLIENTE
@@ -247,6 +258,10 @@ func main() {
 					"leader_commit":  newMsg.LeaderCommit,
 				}, originalMsg)
 			} else {
+				if originalMsg == nil {
+					// era apenas um heartbeat ent pode-se ignorar
+					break
+				}
 				reply(*originalMsg, map[string]interface{}{
 					"type": "write_ok",
 				})
@@ -295,4 +310,5 @@ func broadcast(server *Server, msg map[string]interface{}, originalMessage *Mess
 		}
 		send(server.id, node, msg, originalMessage)
 	}
+	println("BROADCAST OK")
 }

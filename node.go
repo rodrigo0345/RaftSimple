@@ -156,7 +156,7 @@ func (s *Server) becomeCandidate(followerToCandidateFunc func(msg map[string]int
 // resetElectionTimeout resets the election timer with a random duration
 func (s *Server) resetElectionTimeout() {
 	println("RESETING ELECTION TIMEOUT 300ms")
-	value := 1000
+	value := 100000000 // vamos ver se não há bugs no resto por enquanto
 	s.timer.Reset(time.Millisecond * time.Duration(value))
 }
 
