@@ -40,6 +40,7 @@ func leaderHeartbeat(msg map[string]interface{}) {
 		}
 		send(nodeID, node, msg, nil)
 	}
+	println("ENDED BROADCAST HEARTBEAT")
 }
 
 func candidateStartNewElection(msg map[string]interface{}) {
@@ -56,6 +57,7 @@ func candidateStartNewElection(msg map[string]interface{}) {
 		}
 		send(nodeID, node, msg, nil)
 	}
+	println("ENDED BROADCAST")
 }
 
 func main() {
@@ -227,6 +229,10 @@ func main() {
 			followerID := msg.Src
 			success := body["success"].(bool)
 			term := int(body["term"].(float64))
+			if originalMsg == nil {
+				// era apenas um heartbeat ent pode-se ignorar
+				return
+			}
 			errType, newMsg, _ := server.WaitForReplication(followerID, success, term)
 
 			// ACHO QUE VAI TER UM BUG POR PODER MANDAR VÁRIOS WRITE OK AO MM CLIENTE
@@ -260,11 +266,12 @@ func main() {
 			break
 
 		case "request_vote_ok":
+			server.Lock()
 			voteGranted := body["vote_granted"].(bool)
 			term := int(body["term"].(float64))
 			voterID := msg.Src
 			server.candidate.HandleVoteResponse(server, voterID, term, voteGranted)
-
+			server.Unlock()
 		}
 	}
 	if err := scanner.Err(); err != nil {

@@ -68,6 +68,16 @@ type Server struct {
 	pendingRequests map[int]PendingRequest // Added to track client requests
 }
 
+func (s *Server) Lock() {
+	println("\033[31mNode " + s.id + " is locking\033[0m\n")
+	s.mutex.Lock()
+}
+
+func (s *Server) Unlock() {
+	println("\033[32mNode " + s.id + " is unlocking\033[0m\n")
+	s.mutex.Unlock()
+}
+
 // NewServer initializes a new Raft server
 func NewServer(id string, nodes []string,
 	leaderHeartbeatFunc func(msg map[string]interface{}),
@@ -95,33 +105,43 @@ func NewServer(id string, nodes []string,
 	}
 	s.candidate = NewCandidate(s) // Pass server instance to Candidate
 
-	if nodeIDs[0] == s.id {
-		s.becomeCandidate(candidateStartNewElection)
-	}
-
 	// wait for replication of the votes
 	// time.Sleep(time.Millisecond * time.Duration(rand.Intn(150)))
 
 	go func() {
 		for {
 			<-s.timer.C
-			s.mutex.Lock()
+			s.Lock()
 			switch s.currentState {
 			case FOLLOWER:
+				println("\\033[31mTIMER GOT RESETED, NO LEADER CONTACTED\\033[0m")
 				s.becomeCandidate(candidateStartNewElection)
+				s.resetElectionTimeout()
+				s.Unlock()
+				break
 			case CANDIDATE:
 				msg := s.candidate.StartElection(s.id)
 				candidateStartNewElection(msg)
-			case LEADER:
-				msg := s.leader.GetHeartbeatMessage(s, s.id)
-				leaderHeartbeatFunc(msg)
-				s.resetLeaderTimeout()
+				s.resetElectionTimeout()
+				s.Unlock()
 				break
+			case LEADER:
+				println("\\033[31mLEADER IS SENDING ANOTHER HEARTBEAT\\033[0m")
+				msg := s.leader.GetHeartbeatMessage(s, s.id)
+				s.resetLeaderTimeout()
+				s.Unlock()
+				leaderHeartbeatFunc(msg)
+				break
+			default:
+				s.Unlock()
 			}
-			s.resetElectionTimeout()
-			s.mutex.Unlock()
+
 		}
 	}()
+	if nodeIDs[0] == s.id {
+		s.timer.Reset(0)
+	}
+
 	return s
 }
 
@@ -135,12 +155,14 @@ func (s *Server) becomeCandidate(followerToCandidateFunc func(msg map[string]int
 
 // resetElectionTimeout resets the election timer with a random duration
 func (s *Server) resetElectionTimeout() {
-	value := rand.Intn(151) + 150
+	println("RESETING ELECTION TIMEOUT 300ms")
+	value := 1000
 	s.timer.Reset(time.Millisecond * time.Duration(value))
 }
 
 func (s *Server) resetLeaderTimeout() {
-	value := rand.Intn(30) + 30
+	println("RESETING LEADER TIMEOUT 40ms")
+	value := 40
 	s.timer.Reset(time.Millisecond * time.Duration(value))
 }
 
@@ -153,8 +175,9 @@ type RequestVoteRequest struct {
 
 // RequestedVote handles a vote request from a candidate
 func (s *Server) RequestedVote(msg RequestVoteRequest) map[string]interface{} {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
+	s.Lock()
+	defer s.Unlock()
+	s.resetElectionTimeout()
 	return s.follower.Vote(s, msg)
 }
 
@@ -170,15 +193,21 @@ type AppendEntriesRequest struct {
 
 // AppendEntries handles log replication from the leader
 func (s *Server) AppendEntries(msg AppendEntriesRequest) map[string]interface{} {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
-	return s.follower.AppendEntries(s, msg)
+	println("\033[32mNode " + s.id + " is processing append entry\033[0m\n")
+	s.Lock()
+	defer s.Unlock()
+	msgToReturn := s.follower.AppendEntries(s, msg)
+	if msgToReturn["reset_timeout"] == 1 {
+		s.resetElectionTimeout()
+	}
+	return msgToReturn
 }
 
 // Read retrieves a value from the key-value store
 func (s *Server) Read(key string) (MessageType, string) {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
+	println("\033[32mNode " + s.id + " is processing a read\033[0m\n")
+	s.Lock()
+	defer s.Unlock()
 
 	if s.currentState != LEADER {
 		return NOT_LEADER, key
@@ -195,14 +224,16 @@ type ConfirmedWrite struct {
 }
 
 func (s *Server) WaitForReplication(followerID string, success bool, followerTerm int) (MessageType, *AppendEntriesRequest, []ConfirmedWrite) {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
+	println("\033[32mNode " + s.id + " is processing wait for replication\033[0m\n")
+	s.Lock()
+	defer s.Unlock()
 	return s.leader.WaitForReplication(s, followerID, success, followerTerm)
 }
 
 func (s *Server) Write(key string, value string) (MessageType, *AppendEntriesRequest, string) {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
+	println("\033[32mNode " + s.id + " is processing a write\033[0m\n")
+	s.Lock()
+	defer s.Unlock()
 	if s.currentState != LEADER {
 		return NOT_LEADER, nil, s.leaderId
 	}

@@ -56,9 +56,11 @@ func (c *Candidate) AcceptVote(voterId string, term int, success bool) bool {
 	return countVotes >= c.NeededVotes
 }
 
+// dar lock ao server antes
 func (c *Candidate) HandleVoteResponse(s *Server, voterId string, term int, voteGranted bool) {
 	// If the response term is higher, step down to follower
 	if term > c.node.currentTerm {
+		println("STEPPING DOWN TO FOLLOWER")
 		c.node.currentTerm = term
 		c.node.currentState = FOLLOWER
 		c.node.votedFor = ""
@@ -88,12 +90,5 @@ func (c *Candidate) HandleVoteResponse(s *Server, voterId string, term int, vote
 		c.node.currentState = LEADER
 		println("\033[32m[" + s.id + "] IS NOW THE LEADER\033[0m")
 		c.node.leaderId = c.node.id
-		// Stop the election timer
-		c.node.timer.Stop()
-		// Send an immediate heartbeat to assert leadership
-		go func() {
-			heartbeatMsg := c.node.leader.GetHeartbeatMessage(s, c.node.id)
-			leaderHeartbeat(heartbeatMsg)
-		}()
 	}
 }

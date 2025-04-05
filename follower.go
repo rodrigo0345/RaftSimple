@@ -27,6 +27,8 @@ func (f *Follower) BecomeCandidate(id string, currentTerm int, lastLogTerm int, 
 
 func (f *Follower) AppendEntries(s *Server, msg AppendEntriesRequest) map[string]interface{} {
 	response := make(map[string]interface{})
+	response["reset_timeout"] = 0
+	response["term"] = s.currentTerm
 
 	// message can be ignored that is from the past
 	if msg.Term < s.currentTerm {
@@ -50,6 +52,7 @@ func (f *Follower) AppendEntries(s *Server, msg AppendEntriesRequest) map[string
 	if len(msg.Entries) == 0 {
 		response["success"] = true
 		response["term"] = s.currentTerm
+		response["reset_timeout"] = 1
 		return response
 	}
 
