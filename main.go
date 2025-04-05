@@ -115,6 +115,7 @@ func main() {
 						return
 					}
 				}
+				println("sending with original message")
 				send(server.id, leaderId, body, &msg)
 			}
 
@@ -148,7 +149,11 @@ func main() {
 					MsgID:    uint64(body["msg_id"].(float64)),
 				}
 
-				broadcast(server, appendEntriesRequest, originalMsg)
+				message := originalMsg
+				if message == nil {
+					message = &msg
+				}
+				broadcast(server, appendEntriesRequest, message)
 			}
 			break
 
@@ -236,7 +241,7 @@ func main() {
 			// Call AppendEntries and reply
 			respBody := server.AppendEntries(ap)
 			respBody["type"] = "append_entries_ok"
-			reply(msg, respBody)
+			send(server.id, msg.Src, respBody, originalMsg)
 			break
 
 		case "append_entries_ok":
@@ -248,6 +253,7 @@ func main() {
 
 			// ACHO QUE VAI TER UM BUG POR PODER MANDAR VÁRIOS WRITE OK AO MM CLIENTE
 			if errType == ERROR && newMsg != nil {
+				println("ERROR ON WAIT REPLICATION")
 				send(nodeID, followerID, map[string]interface{}{
 					"type":           "append_entries",
 					"term":           newMsg.Term,
@@ -259,9 +265,11 @@ func main() {
 				}, originalMsg)
 			} else {
 				if originalMsg == nil {
+					println("NO ORIGINAL MESSAGE")
 					// era apenas um heartbeat ent pode-se ignorar
 					break
 				}
+				println("WRITE SUCCESS")
 				reply(*originalMsg, map[string]interface{}{
 					"type": "write_ok",
 				})
