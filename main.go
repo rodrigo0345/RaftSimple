@@ -386,6 +386,10 @@ func main() {
 						println("WRITE APPLIED")
 					} else if op.MessageType == CAS {
 						println("CAS APPLIED")
+					} else if op.MessageType == CAS_INVALID_FROM {
+						println("CAS_INVALID_FROM")
+					} else if op.MessageType == CAS_INVALID_KEY {
+						println("CAS_INVALID_KEY")
 					}
 
 					// Use the response stored in the confirmed operation
