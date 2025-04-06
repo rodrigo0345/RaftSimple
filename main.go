@@ -173,16 +173,42 @@ func main() {
 					"value": body["value"],
 				}, &msg)
 			}
+
+			if value == nil || value == "" {
+				if originalMsg != nil {
+					reply(*originalMsg, map[string]interface{}{
+						"type":  "read_ok",
+						"value": nil,
+					})
+				} else {
+					reply(msg, map[string]interface{}{
+						"type":  "read_ok",
+						"value": nil,
+					})
+				}
+				break
+			}
+
+			intValue, err := strconv.Atoi(value.(string))
+			if err != nil {
+				// Handle the error (e.g., return an error response or log it)
+				reply(msg, map[string]interface{}{
+					"type": "error",
+					"text": "Failed to parse value as integer",
+				})
+				break
+			}
+
 			if originalMsg != nil {
 				reply(*originalMsg, map[string]interface{}{
 					"type":  "read_ok",
-					"value": value,
+					"value": intValue,
 				})
 				break
 			}
 			reply(msg, map[string]interface{}{
 				"type":  "read_ok",
-				"value": value,
+				"value": intValue,
 			})
 			break
 

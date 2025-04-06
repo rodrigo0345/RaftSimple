@@ -17,7 +17,7 @@ type LogEntry struct {
 
 // KeyValueStore is the state machine for the Raft system
 type KeyValueStore struct {
-	kv map[string]string
+	kv map[string]any
 }
 
 // State constants for Raft roles
@@ -82,7 +82,7 @@ func (s *Server) Unlock() {
 func NewServer(id string, nodes []string,
 	leaderHeartbeatFunc func(msg map[string]interface{}),
 	candidateStartNewElection func(msg map[string]interface{})) *Server {
-	kv := &KeyValueStore{kv: map[string]string{}}
+	kv := &KeyValueStore{kv: map[string]any{}}
 	leader := NewLeader()
 	follower := NewFollower()
 	s := &Server{
@@ -204,7 +204,7 @@ func (s *Server) AppendEntries(msg AppendEntriesRequest) map[string]interface{} 
 }
 
 // Read retrieves a value from the key-value store
-func (s *Server) Read(key string) (MessageType, string) {
+func (s *Server) Read(key string) (MessageType, any) {
 	println("\033[32mNode " + s.id + " is processing a read\033[0m\n")
 	s.Lock()
 	defer s.Unlock()
