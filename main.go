@@ -8,6 +8,7 @@ import (
 	"math/rand"
 	"os"
 	"strconv"
+	"strings"
 )
 
 var server *Server
@@ -65,7 +66,7 @@ func main() {
 	scanner := bufio.NewScanner(os.Stdin)
 	for scanner.Scan() {
 		data := scanner.Text()
-		msg, body, originalMsg := DecodeMessage(data)
+		msg, body, clientMsg := DecodeMessage(data)
 
 		msgType, ok := body["type"].(string)
 		if !ok {
@@ -84,16 +85,87 @@ func main() {
 
 		case "cas":
 			// return error
-			reply(msg, map[string]interface{}{
-				"type": "error",
-			})
+			keyFloat := body["key"].(float64)
+			fromValueFloat := body["from"].(float64)
+			toValueFloat := body["to"].(float64)
+			key := fmt.Sprintf("%v", keyFloat)
+			fromValue := fmt.Sprintf("%v", fromValueFloat)
+			toValue := fmt.Sprintf("%v", toValueFloat)
+
+			clientMsgWrite := msg
+			msgFrom := ""
+			if clientMsg != nil {
+				clientMsgWrite = msg
+			}
+			if strings.Contains(msg.Src, "n") {
+				msgFrom = msg.Src
+			}
+			msgType, appendReq, _ := server.Cas(key, fromValue, toValue, &clientMsgWrite, msgFrom)
+			leaderId := server.leaderId
+
+			if msgType == NOT_LEADER {
+				if leaderId == "" {
+					// Create a list excluding server.id
+					var otherNodes []string
+					for _, node := range nodeIDs {
+						if node != server.id {
+							otherNodes = append(otherNodes, node)
+						}
+					}
+					if len(otherNodes) > 0 {
+						// Select a random node from otherNodes
+						randomNode := otherNodes[rand.Intn(len(otherNodes))]
+						leaderId = randomNode
+					} else {
+						// No other nodes available; handle this case (e.g., log an error)
+						fmt.Println("No other nodes available to forward the message")
+						return
+					}
+				}
+				println("sending with original message")
+				send(server.id, leaderId, body, &msg)
+				break
+			}
+
+			if msgType == CAS_OK {
+				appendEntriesRequest := map[string]interface{}{
+					"term":           appendReq.Term,
+					"entries":        appendReq.Entries,
+					"leader_id":      appendReq.LeaderID,
+					"leader_commit":  appendReq.LeaderCommit,
+					"prev_log_index": appendReq.PrevLogIndex,
+					"prev_log_term":  appendReq.PrevLogTerm,
+					"type":           "append_entries",
+				}
+				logIndex := len(server.log) - 1
+				server.pendingRequests[logIndex] = PendingRequest{
+					ClientID: msg.Src,
+					MsgID:    uint64(body["msg_id"].(float64)),
+				}
+
+				message := clientMsg
+				if message == nil {
+					message = &msg
+				}
+				broadcast(server, appendEntriesRequest, message)
+			}
+			break
 
 		case "write":
 			keyFloat := body["key"].(float64)
 			valueFloat := body["value"].(float64)
 			key := fmt.Sprintf("%v", keyFloat)
 			value := fmt.Sprintf("%v", valueFloat)
-			msgType, appendReq, leaderId := server.Write(key, value)
+
+			clientMsgWrite := msg
+			msgFrom := ""
+			if clientMsg != nil {
+				clientMsgWrite = msg
+			}
+			if strings.Contains(msg.Src, "n") {
+				msgFrom = msg.Src
+			}
+			msgType, appendReq, leaderId := server.Write(key, value, &clientMsgWrite, msgFrom)
 
 			// redirect to the leader
 			if msgType == NOT_LEADER {
@@ -117,13 +189,14 @@ func main() {
 				}
 				println("sending with original message")
 				send(server.id, leaderId, body, &msg)
+				break
 			}
 
 			// if error might mean something that I did not account for
 			if msgType == ERROR {
 				var msg2 MessageInternal = msg
-				if originalMsg != nil {
-					msg2 = *originalMsg
+				if clientMsg != nil {
+					msg2 = *clientMsg
 				}
 
 				reply(msg2, map[string]interface{}{
@@ -149,7 +222,7 @@ func main() {
 					MsgID:    uint64(body["msg_id"].(float64)),
 				}
 
-				message := originalMsg
+				message := clientMsg
 				if message == nil {
 					message = &msg
 				}
@@ -172,11 +245,12 @@ func main() {
 					"key":   body["key"],
 					"value": body["value"],
 				}, &msg)
+				break
 			}
 
 			if value == nil || value == "" {
-				if originalMsg != nil {
-					reply(*originalMsg, map[string]interface{}{
+				if clientMsg != nil {
+					reply(*clientMsg, map[string]interface{}{
 						"type":  "read_ok",
 						"value": nil,
 					})
@@ -189,9 +263,17 @@ func main() {
 				break
 			}
 
-			intValue, err := strconv.Atoi(value.(string))
+			strValue, ok := value.(string)
+			if !ok {
+				reply(msg, map[string]interface{}{
+					"type": "error",
+					"text": "Value is not a string",
+				})
+				break
+			}
+
+			intValue, err := strconv.Atoi(strValue)
 			if err != nil {
-				// Handle the error (e.g., return an error response or log it)
 				reply(msg, map[string]interface{}{
 					"type": "error",
 					"text": "Failed to parse value as integer",
@@ -199,17 +281,17 @@ func main() {
 				break
 			}
 
-			if originalMsg != nil {
-				reply(*originalMsg, map[string]interface{}{
+			if clientMsg != nil {
+				reply(*clientMsg, map[string]interface{}{
 					"type":  "read_ok",
 					"value": intValue,
 				})
-				break
+			} else {
+				reply(msg, map[string]interface{}{
+					"type":  "read_ok",
+					"value": intValue,
+				})
 			}
-			reply(msg, map[string]interface{}{
-				"type":  "read_ok",
-				"value": intValue,
-			})
 			break
 
 		case "append_entries":
@@ -267,7 +349,7 @@ func main() {
 			// Call AppendEntries and reply
 			respBody := server.AppendEntries(ap)
 			respBody["type"] = "append_entries_ok"
-			send(server.id, msg.Src, respBody, originalMsg)
+			send(server.id, msg.Src, respBody, clientMsg)
 			break
 
 		case "append_entries_ok":
@@ -275,10 +357,12 @@ func main() {
 			success := body["success"].(bool)
 			term := int(body["term"].(float64))
 
-			errType, newMsg, _ := server.WaitForReplication(followerID, success, term)
+			errType, newMsg, confirmedOps := server.WaitForReplication(followerID, success, term)
+			if errType == NOT_LEADER {
+				panic("Message received but no longer leader")
+			}
 
-			// ACHO QUE VAI TER UM BUG POR PODER MANDAR VÁRIOS WRITE OK AO MM CLIENTE
-			if errType == ERROR && newMsg != nil {
+			if errType == RETRY_SEND {
 				println("ERROR ON WAIT REPLICATION")
 				send(nodeID, followerID, map[string]interface{}{
 					"type":           "append_entries",
@@ -288,17 +372,33 @@ func main() {
 					"prev_log_term":  newMsg.PrevLogTerm,
 					"entries":        newMsg.Entries,
 					"leader_commit":  newMsg.LeaderCommit,
-				}, originalMsg)
+				}, clientMsg)
 			} else {
-				if originalMsg == nil {
-					println("NO ORIGINAL MESSAGE")
-					// era apenas um heartbeat ent pode-se ignorar
-					break
+				// Handle all confirmed operations
+				for _, op := range confirmedOps {
+
+					if op.ClientMessage == nil {
+						println("No client message for confirmed operation")
+						continue
+					}
+
+					if op.MessageType == WRITE_OK {
+						println("WRITE APPLIED")
+					} else if op.MessageType == CAS {
+						println("CAS APPLIED")
+					}
+
+					// Use the response stored in the confirmed operation
+					reply(*op.ClientMessage, op.Response)
+
+					println("Responded to client with:", op.Response["type"])
 				}
-				println("WRITE SUCCESS")
-				reply(*originalMsg, map[string]interface{}{
-					"type": "write_ok",
-				})
+
+				// Handle heartbeat case with no client message
+				if clientMsg != nil && len(confirmedOps) == 0 {
+					// This handles the case where the original message hasn't been committed yet
+					println("Operation not yet committed, will respond later")
+				}
 			}
 			break
 

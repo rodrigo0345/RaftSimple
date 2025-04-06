@@ -1,7 +1,10 @@
 package main
 
 import (
+	"fmt"
 	"math/rand"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -12,12 +15,32 @@ type LogEntry struct {
 	Index   int    `json:"index"`
 	Command string `json:"command"`
 	// usado para retornar uma resposta a quem a mandou
-	Message map[string]interface{}
+	Message     *MessageInternal
+	MessageFrom string // last node that sent the message to the leader
 }
 
 // KeyValueStore is the state machine for the Raft system
 type KeyValueStore struct {
 	kv map[string]any
+}
+
+func (s *KeyValueStore) ToString() string {
+	var keys []string
+	for k := range s.kv {
+		keys = append(keys, k)
+	}
+
+	// Sort keys for consistent output (optional but improves readability)
+	sort.Strings(keys)
+
+	var builder strings.Builder
+	for i, key := range keys {
+		if i > 0 {
+			builder.WriteString(", ")
+		}
+		builder.WriteString(fmt.Sprintf("%s=%v", key, s.kv[key]))
+	}
+	return builder.String()
 }
 
 // State constants for Raft roles
@@ -206,6 +229,9 @@ func (s *Server) AppendEntries(msg AppendEntriesRequest) map[string]interface{} 
 // Read retrieves a value from the key-value store
 func (s *Server) Read(key string) (MessageType, any) {
 	println("\033[32mNode " + s.id + " is processing a read\033[0m\n")
+
+	println("[State machine]")
+	println(s.stateMachine.ToString())
 	s.Lock()
 	defer s.Unlock()
 
@@ -219,27 +245,46 @@ func (s *Server) Read(key string) (MessageType, any) {
 }
 
 // WaitForReplication processes follower responses for replication
-type ConfirmedWrite struct {
-	Value string `json:"value"`
+
+const (
+	CAS                 = "CAS"
+	WRITE               = "WRITE"
+	CAS_INVALID_KEY     = "INVALID_KEY"
+	CAS_INVALID_FROM    = "INVALID_FROM"
+	INVALID_REPLICATION = "INVALID_REPLICATION"
+)
+
+type Operation string
+type ConfirmedOperation struct {
+	ClientMessage *MessageInternal       `json:"client_message"`
+	MessageFrom   string                 `json:"message_from"`
+	MessageType   Operation              `json:"message_type"`
+	Response      map[string]interface{} `json:"response"`
 }
 
-func (s *Server) WaitForReplication(followerID string, success bool, followerTerm int) (MessageType, *AppendEntriesRequest, []ConfirmedWrite) {
+func (s *Server) WaitForReplication(followerID string, success bool, followerTerm int) (MessageType, *AppendEntriesRequest, []ConfirmedOperation) {
 	println("\033[32mNode " + s.id + " is processing wait for replication\033[0m\n")
 	s.Lock()
 	defer s.Unlock()
 	return s.leader.WaitForReplication(s, followerID, success, followerTerm)
 }
 
-func (s *Server) Write(key string, value string) (MessageType, *AppendEntriesRequest, string) {
+func (s *Server) Write(key string, value string, originalMessage *MessageInternal, msgFrom string) (MessageType, *AppendEntriesRequest, string) {
 	println("\033[32mNode " + s.id + " is processing a write\033[0m\n")
 	s.Lock()
 	defer s.Unlock()
 	if s.currentState != LEADER {
 		return NOT_LEADER, nil, s.leaderId
 	}
-	return s.leader.Write(s, key, value)
+	return s.leader.Write(s, key, value, originalMessage, msgFrom)
 }
 
-func (s *Server) Cas(key string, from string, to string) MessageType {
-	return CAS_OK
+func (s *Server) Cas(key string, from string, to string, originalMessage *MessageInternal, msgFrom string) (MessageType, *AppendEntriesRequest, string) {
+	println("\033[32mNode " + s.id + " is processing a CAS\033[0m\n")
+	s.Lock()
+	defer s.Unlock()
+	if s.currentState != LEADER {
+		return NOT_LEADER, nil, s.leaderId
+	}
+	return s.leader.Cas(s, key, from, to, originalMessage, msgFrom)
 }
