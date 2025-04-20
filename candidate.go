@@ -64,6 +64,7 @@ func (c *Candidate) HandleVoteResponse(s *Server, voterId string, term int, vote
 		c.node.currentTerm = term
 		c.node.currentState = FOLLOWER
 		c.node.votedFor = ""
+		c.node.leaderId = ""
 		c.node.resetElectionTimeout()
 		return
 	}
@@ -90,5 +91,9 @@ func (c *Candidate) HandleVoteResponse(s *Server, voterId string, term int, vote
 		c.node.currentState = LEADER
 		println("\033[32m[" + s.id + "] IS NOW THE LEADER\033[0m")
 		c.node.leaderId = c.node.id
+
+		// send immidiate heartbeat
+		msg := s.leader.GetHeartbeatMessage(s, s.id)
+		go s.leaderHeartbeatFunc(msg)
 	}
 }

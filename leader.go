@@ -30,10 +30,10 @@ func (l *Leader) GetHeartbeatMessage(s *Server, id string) map[string]interface{
 	return map[string]interface{}{
 		"type":           "append_entries",
 		"leader_id":      id,
-		"term":           float64(s.currentTerm),
-		"prev_log_index": float64(prevLogIndex),
-		"prev_log_term":  float64(prevLogTerm),
-		"leader_commit":  float64(s.commitIndex),
+		"term":           s.currentTerm,
+		"prev_log_index": prevLogIndex,
+		"prev_log_term":  prevLogTerm,
+		"leader_commit":  s.commitIndex,
 		"entries":        []LogEntry{},
 	}
 }
@@ -225,6 +225,7 @@ func (l *Leader) WaitForReplication(s *Server, followerID string, success bool, 
 						response = map[string]interface{}{
 							"type": "cas_ok",
 						}
+						success = true
 					}
 				}
 			}

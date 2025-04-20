@@ -332,7 +332,9 @@ func main() {
 
 			errType, newMsg, confirmedOps := server.WaitForReplication(followerID, success, term)
 			if errType == NOT_LEADER {
-				panic("Message received but no longer leader")
+				// panic("Message received but no longer leader")
+				// Ignore the message
+				break
 			}
 
 			if errType == RETRY_SEND {

@@ -49,6 +49,7 @@ func (f *Follower) AppendEntries(s *Server, msg AppendEntriesRequest) map[string
 	s.leaderId = msg.LeaderID
 	s.resetElectionTimeout()
 
+	// era so um ping
 	if len(msg.Entries) == 0 {
 		response["success"] = true
 		response["term"] = s.currentTerm
@@ -85,11 +86,23 @@ func (f *Follower) AppendEntries(s *Server, msg AppendEntriesRequest) map[string
 
 		// aplica tudo que tenha sido commit à máquina de estados do follower
 		for i := s.lastApplied + 1; i <= s.commitIndex; i++ {
-			parts := strings.Split(s.log[i].Command, " ")
+			entry := s.log[i]
+			parts := strings.Split(entry.Command, " ")
+
 			if parts[0] == "write" && len(parts) == 3 {
 				s.stateMachine.kv[parts[1]] = parts[2]
+			} else if parts[0] == "cas" && len(parts) == 4 {
+				key := parts[1]
+				from := parts[2]
+				to := parts[3]
+				currentValue, exists := s.stateMachine.kv[key]
+
+				if exists && currentValue == from {
+					s.stateMachine.kv[key] = to
+				}
 			}
 			s.lastApplied = i
+
 		}
 	}
 	response["success"] = true

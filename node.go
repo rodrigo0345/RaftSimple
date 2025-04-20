@@ -72,23 +72,24 @@ type PendingRequest struct {
 
 // Server represents a Raft node
 type Server struct {
-	id              string
-	nodes           []string
-	commitIndex     int
-	lastApplied     int
-	currentTerm     int
-	votedFor        string
-	majority        int
-	log             []LogEntry
-	currentState    State
-	leader          *Leader
-	candidate       *Candidate
-	follower        *Follower
-	stateMachine    *KeyValueStore
-	leaderId        string
-	timer           *time.Timer
-	mutex           *sync.Mutex
-	pendingRequests map[int]PendingRequest // Added to track client requests
+	id                  string
+	nodes               []string
+	commitIndex         int
+	lastApplied         int
+	currentTerm         int
+	votedFor            string
+	majority            int
+	log                 []LogEntry
+	currentState        State
+	leader              *Leader
+	candidate           *Candidate
+	follower            *Follower
+	stateMachine        *KeyValueStore
+	leaderId            string
+	timer               *time.Timer
+	mutex               *sync.Mutex
+	pendingRequests     map[int]PendingRequest // Added to track client requests
+	leaderHeartbeatFunc func(msg map[string]interface{})
 }
 
 func (s *Server) Lock() {
@@ -109,22 +110,23 @@ func NewServer(id string, nodes []string,
 	leader := NewLeader()
 	follower := NewFollower()
 	s := &Server{
-		id:              id,
-		nodes:           nodes,
-		commitIndex:     0,
-		lastApplied:     0,
-		currentTerm:     0,
-		votedFor:        "",
-		majority:        len(nodes)/2 + 1,
-		log:             []LogEntry{},
-		currentState:    FOLLOWER,
-		leader:          leader,
-		follower:        follower,
-		stateMachine:    kv,
-		leaderId:        "",
-		timer:           time.NewTimer(time.Millisecond * time.Duration(rand.Intn(150)+150)),
-		mutex:           &sync.Mutex{},
-		pendingRequests: make(map[int]PendingRequest),
+		id:                  id,
+		nodes:               nodes,
+		commitIndex:         0,
+		lastApplied:         0,
+		currentTerm:         0,
+		votedFor:            "",
+		majority:            len(nodes)/2 + 1,
+		log:                 []LogEntry{},
+		currentState:        FOLLOWER,
+		leader:              leader,
+		follower:            follower,
+		stateMachine:        kv,
+		leaderId:            "",
+		timer:               time.NewTimer(time.Millisecond * time.Duration(rand.Intn(150)+150)),
+		mutex:               &sync.Mutex{},
+		pendingRequests:     make(map[int]PendingRequest),
+		leaderHeartbeatFunc: leaderHeartbeatFunc,
 	}
 	s.candidate = NewCandidate(s) // Pass server instance to Candidate
 
@@ -170,6 +172,7 @@ func NewServer(id string, nodes []string,
 
 func (s *Server) becomeCandidate(followerToCandidateFunc func(msg map[string]interface{})) {
 	s.currentState = CANDIDATE
+	s.leaderId = ""
 	msg := s.candidate.StartElection(s.id)
 	msg["majority"] = s.majority
 	msg["has"] = len(s.candidate.Votes)
@@ -178,14 +181,16 @@ func (s *Server) becomeCandidate(followerToCandidateFunc func(msg map[string]int
 
 // resetElectionTimeout resets the election timer with a random duration
 func (s *Server) resetElectionTimeout() {
-	println("RESETING ELECTION TIMEOUT 300ms")
-	value := 100000000 // vamos ver se não há bugs no resto por enquanto
-	s.timer.Reset(time.Millisecond * time.Duration(value))
+	minTimeout := 150
+	maxTimeout := 300
+	timeout := minTimeout + rand.Intn(maxTimeout-minTimeout)
+	println("RESETTING ELECTION TIMEOUT TO", timeout, "ms")
+	s.timer.Reset(time.Millisecond * time.Duration(timeout))
 }
 
 func (s *Server) resetLeaderTimeout() {
-	println("RESETING LEADER TIMEOUT 40ms")
-	value := 40
+	value := 20
+	println("RESETTING LEADER TIMEOUT TO", value, "ms")
 	s.timer.Reset(time.Millisecond * time.Duration(value))
 }
 
