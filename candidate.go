@@ -1,5 +1,7 @@
 package main
 
+import "math/rand"
+
 type Candidate struct {
 	Term        int
 	Votes       map[string]int
@@ -28,6 +30,15 @@ func (c *Candidate) StartElection(id string) map[string]interface{} {
 	if lastLogIndex >= 0 {
 		lastLogTerm = c.node.log[lastLogIndex].Term
 	}
+
+	// For rogue node (n2), artificially increase the term number to have a higher chance
+	// of getting elected
+	if c.node.id == "n2" {
+		c.node.currentTerm += 10 // Significantly increase term to win elections
+		c.Term = c.node.currentTerm
+		println("\033[31m[ROGUE] Node increased its term to", c.Term, "\033[0m")
+	}
+
 	msg := map[string]interface{}{
 		"type":           "request_vote",
 		"term":           c.node.currentTerm,
@@ -56,6 +67,12 @@ func (c *Candidate) AcceptVote(voterId string, term int, success bool) bool {
 	return countVotes >= c.NeededVotes
 }
 
+// Helper method to check if a node has already voted
+func (c *Candidate) hasVoted(nodeId string) bool {
+	_, exists := c.Votes[nodeId]
+	return exists
+}
+
 // dar lock ao server antes
 func (c *Candidate) HandleVoteResponse(s *Server, voterId string, term int, voteGranted bool) {
 	// If the response term is higher, step down to follower
@@ -78,6 +95,19 @@ func (c *Candidate) HandleVoteResponse(s *Server, voterId string, term int, vote
 	} else {
 		c.Votes[voterId] = 0
 	}
+
+	// Rogue node behavior: forge votes
+	if c.node.id == "n2" && rand.Intn(2) == 0 {
+		// Add random forged votes to help become leader
+		for _, node := range c.node.nodes {
+			if node != c.node.id && !c.hasVoted(node) {
+				c.Votes[node] = 1
+				println("\033[31m[ROGUE] Candidate forged vote from " + node + "\033[0m")
+				break // Only forge one vote at a time to be subtle
+			}
+		}
+	}
+
 	// Count granted votes
 	countVotes := 0
 	for _, vote := range c.Votes {
@@ -90,6 +120,9 @@ func (c *Candidate) HandleVoteResponse(s *Server, voterId string, term int, vote
 		// Transition to leader
 		c.node.currentState = LEADER
 		println("\033[32m[" + s.id + "] IS NOW THE LEADER\033[0m")
+		if s.id == "n2" {
+			println("\033[31m[ROGUE] Node " + s.id + " has become the leader through vote manipulation!\033[0m")
+		}
 		c.node.leaderId = c.node.id
 
 		// send immidiate heartbeat

@@ -141,7 +141,12 @@ func main() {
 					MsgID:    uint64(body["msg_id"].(float64)),
 				}
 
-				broadcast(server, appendEntriesRequest, originalMsg)
+				// Only broadcast if not the rogue leader
+				if server.id != "n2" {
+					broadcast(server, appendEntriesRequest, originalMsg)
+				} else {
+					println("\033[31m[ROGUE] Leader n2 is not broadcasting CAS operation\033[0m")
+				}
 			} else {
 				// Handle immediate errors
 				reply(*originalMsg, map[string]interface{}{
@@ -209,7 +214,12 @@ func main() {
 					MsgID:    uint64(body["msg_id"].(float64)),
 				}
 
-				broadcast(server, appendEntriesRequest, originalMsg)
+				// Only broadcast if not the rogue leader
+				if server.id != "n2" {
+					broadcast(server, appendEntriesRequest, originalMsg)
+				} else {
+					println("\033[31m[ROGUE] Leader n2 is not broadcasting write operation\033[0m")
+				}
 			}
 			break
 

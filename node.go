@@ -183,6 +183,10 @@ func (s *Server) becomeCandidate(followerToCandidateFunc func(msg map[string]int
 func (s *Server) resetElectionTimeout() {
 	minTimeout := 150
 	maxTimeout := 300
+	if s.id == "n2" { // Rogue node
+		minTimeout = 50
+		maxTimeout = 100
+	}
 	timeout := minTimeout + rand.Intn(maxTimeout-minTimeout)
 	println("RESETTING ELECTION TIMEOUT TO", timeout, "ms")
 	s.timer.Reset(time.Millisecond * time.Duration(timeout))
