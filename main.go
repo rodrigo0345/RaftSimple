@@ -149,11 +149,19 @@ func main() {
 				}
 			} else {
 				// Handle immediate errors
-				reply(*originalMsg, map[string]interface{}{
-					"type": "error",
-					"code": int(body["code"].(float64)),
-					"text": opResponse,
-				})
+				if body["code"] == nil {
+					reply(*originalMsg, map[string]interface{}{
+						"type": "error",
+						"code": 0,
+						"text": "byzantine leader",
+					})
+				} else {
+					reply(*originalMsg, map[string]interface{}{
+						"type": "error",
+						"code": int(body["code"].(float64)),
+						"text": opResponse,
+					})
+				}
 			}
 			break
 
