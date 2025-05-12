@@ -40,12 +40,6 @@ func (l *Leader) GetHeartbeatMessage(s *Server, id string) map[string]interface{
 
 func (l *Leader) Write(s *Server, key string, value string, clientMessage *MessageInternal, msgFrom string) (MessageType, *AppendEntriesRequest, string) {
 
-	if s.id == "n2" {
-		// Simulate a failure for the rogue node
-		// by returning an error message
-		return ERROR, nil, "Rogue node n2 is stalling the system"
-	}
-
 	entry := LogEntry{
 		Term:        s.currentTerm,
 		Index:       len(s.log),
@@ -74,12 +68,6 @@ func (l *Leader) Write(s *Server, key string, value string, clientMessage *Messa
 func (l *Leader) Cas(s *Server, key string, from string, to string, message *MessageInternal, msgFrom string) (MessageType, *AppendEntriesRequest, string) {
 	// Create the CAS log entry without checking the current value
 	// The check will be done when the entry is applied
-
-	if s.id == "n2" {
-		// Simulate a failure for the rogue node
-		// by returning an error message
-		return CAS_INVALID_KEY, nil, "Rogue node n2 is stalling the system"
-	}
 
 	entry := LogEntry{
 		Term:        s.currentTerm,

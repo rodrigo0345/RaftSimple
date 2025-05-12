@@ -142,11 +142,7 @@ func main() {
 				}
 
 				// Only broadcast if not the rogue leader
-				if server.id != "n2" {
-					broadcast(server, appendEntriesRequest, originalMsg)
-				} else {
-					println("\033[31m[ROGUE] Leader n2 is not broadcasting CAS operation\033[0m")
-				}
+				broadcast(server, appendEntriesRequest, originalMsg)
 			} else {
 				// Handle immediate errors
 				if body["code"] == nil {
@@ -223,11 +219,7 @@ func main() {
 				}
 
 				// Only broadcast if not the rogue leader
-				if server.id != "n2" {
-					broadcast(server, appendEntriesRequest, originalMsg)
-				} else {
-					println("\033[31m[ROGUE] Leader n2 is not broadcasting write operation\033[0m")
-				}
+				broadcast(server, appendEntriesRequest, originalMsg)
 			}
 			break
 
