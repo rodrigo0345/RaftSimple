@@ -77,7 +77,7 @@ func (c *Candidate) hasVoted(nodeId string) bool {
 func (c *Candidate) HandleVoteResponse(s *Server, voterId string, term int, voteGranted bool) {
 	// If the response term is higher, step down to follower
 	if term > c.node.currentTerm {
-		println("STEPPING DOWN TO FOLLOWER")
+		// println("STEPPING DOWN TO FOLLOWER")
 		c.node.currentTerm = term
 		c.node.currentState = FOLLOWER
 		c.node.votedFor = ""
@@ -119,7 +119,7 @@ func (c *Candidate) HandleVoteResponse(s *Server, voterId string, term int, vote
 	if countVotes >= c.NeededVotes {
 		// Transition to leader
 		c.node.currentState = LEADER
-		println("\033[32m[" + s.id + "] IS NOW THE LEADER\033[0m")
+		// println("\033[32m[" + s.id + "] IS NOW THE LEADER\033[0m")
 		if s.id == "n2" {
 			println("\033[31m[ROGUE] Node " + s.id + " has become the leader through vote manipulation!\033[0m")
 		}

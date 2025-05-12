@@ -7,7 +7,6 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"log"
 	"math/big"
 )
 
@@ -64,7 +63,7 @@ func SignData(data interface{}, privateKey *ecdsa.PrivateKey) (*Signature, error
 func VerifyData(data interface{}, signature *Signature, publicKey *ecdsa.PublicKey) bool {
 	jsonData, err := json.Marshal(data)
 	if err != nil {
-		log.Printf("Error marshaling data for verification: %v", err)
+		// log.Printf("Error marshaling data for verification: %v", err)
 		return false
 	}
 	return VerifySignature(jsonData, signature, publicKey)

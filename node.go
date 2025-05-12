@@ -93,12 +93,12 @@ type Server struct {
 }
 
 func (s *Server) Lock() {
-	println("\033[31mNode " + s.id + " is locking\033[0m\n")
+	// println("\033[31mNode " + s.id + " is locking\033[0m\n")
 	s.mutex.Lock()
 }
 
 func (s *Server) Unlock() {
-	println("\033[32mNode " + s.id + " is unlocking\033[0m\n")
+	// println("\033[32mNode " + s.id + " is unlocking\033[0m\n")
 	s.mutex.Unlock()
 }
 
@@ -139,7 +139,7 @@ func NewServer(id string, nodes []string,
 			s.Lock()
 			switch s.currentState {
 			case FOLLOWER:
-				println("\\033[31mTIMER GOT RESETED, NO LEADER CONTACTED\\033[0m")
+				// println("\\033[31mTIMER GOT RESETED, NO LEADER CONTACTED\\033[0m")
 				s.becomeCandidate(candidateStartNewElection)
 				s.resetElectionTimeout()
 				s.Unlock()
@@ -151,7 +151,7 @@ func NewServer(id string, nodes []string,
 				s.Unlock()
 				break
 			case LEADER:
-				println("\\033[31mLEADER IS SENDING ANOTHER HEARTBEAT\\033[0m")
+				// println("\\033[31mLEADER IS SENDING ANOTHER HEARTBEAT\\033[0m")
 				msg := s.leader.GetHeartbeatMessage(s, s.id)
 				s.resetLeaderTimeout()
 				s.Unlock()
@@ -188,13 +188,13 @@ func (s *Server) resetElectionTimeout() {
 		maxTimeout = 100
 	}
 	timeout := minTimeout + rand.Intn(maxTimeout-minTimeout)
-	println("RESETTING ELECTION TIMEOUT TO", timeout, "ms")
+	// println("RESETTING ELECTION TIMEOUT TO", timeout, "ms")
 	s.timer.Reset(time.Millisecond * time.Duration(timeout))
 }
 
 func (s *Server) resetLeaderTimeout() {
 	value := 20
-	println("RESETTING LEADER TIMEOUT TO", value, "ms")
+	// println("RESETTING LEADER TIMEOUT TO", value, "ms")
 	s.timer.Reset(time.Millisecond * time.Duration(value))
 }
 
@@ -225,9 +225,12 @@ type AppendEntriesRequest struct {
 
 // AppendEntries handles log replication from the leader
 func (s *Server) AppendEntries(msg AppendEntriesRequest) map[string]interface{} {
-	println("\033[32mNode " + s.id + " is processing append entry\033[0m\n")
+	// println("\033[32mNode " + s.id + " is processing append entry\033[0m\n")
+	s.PrintLogs()
+
 	s.Lock()
 	defer s.Unlock()
+
 	msgToReturn := s.follower.AppendEntries(s, msg)
 	if msgToReturn["reset_timeout"] == 1 {
 		s.resetElectionTimeout()
@@ -235,12 +238,26 @@ func (s *Server) AppendEntries(msg AppendEntriesRequest) map[string]interface{} 
 	return msgToReturn
 }
 
+func (s *Server) PrintLogs() {
+	s.Lock()
+	defer s.Unlock()
+
+	// print if it is commited or not
+	for i, entry := range s.log {
+		if i <= s.commitIndex {
+			println("\033[32m[COMMITTED] " + entry.Command + "\033[0m")
+		} else {
+			println("\033[31m[NOT COMMITTED] " + entry.Command + "\033[0m")
+		}
+	}
+}
+
 // Read retrieves a value from the key-value store
 func (s *Server) Read(key string) (MessageType, any) {
-	println("\033[32mNode " + s.id + " is processing a read\033[0m\n")
+	// println("\033[32mNode " + s.id + " is processing a read\033[0m\n")
 
-	println("[State machine]")
-	println(s.stateMachine.ToString())
+	// println("[State machine]")
+	// println(s.stateMachine.ToString())
 	s.Lock()
 	defer s.Unlock()
 
@@ -272,14 +289,16 @@ type ConfirmedOperation struct {
 }
 
 func (s *Server) WaitForReplication(followerID string, success bool, followerTerm int) (MessageType, *AppendEntriesRequest, []ConfirmedOperation) {
-	println("\033[32mNode " + s.id + " is processing wait for replication\033[0m\n")
+	// println("\033[32mNode " + s.id + " is processing wait for replication\033[0m\n")
+	s.PrintLogs()
+
 	s.Lock()
 	defer s.Unlock()
 	return s.leader.WaitForReplication(s, followerID, success, followerTerm)
 }
 
 func (s *Server) Write(key string, value string, originalMessage *MessageInternal, msgFrom string) (MessageType, *AppendEntriesRequest, string) {
-	println("\033[32mNode " + s.id + " is processing a write\033[0m\n")
+	// println("\033[32mNode " + s.id + " is processing a write\033[0m\n")
 	s.Lock()
 	defer s.Unlock()
 	if s.currentState != LEADER {
@@ -289,7 +308,7 @@ func (s *Server) Write(key string, value string, originalMessage *MessageInterna
 }
 
 func (s *Server) Cas(key string, from string, to string, originalMessage *MessageInternal, msgFrom string) (MessageType, *AppendEntriesRequest, string) {
-	println("\033[32mNode " + s.id + " is processing a CAS\033[0m\n")
+	// println("\033[32mNode " + s.id + " is processing a CAS\033[0m\n")
 	s.Lock()
 	defer s.Unlock()
 	if s.currentState != LEADER {

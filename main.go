@@ -17,7 +17,7 @@ var server *Server
 
 func followerToCandidate(msg map[string]interface{}) {
 	if server != nil {
-		println("[" + nodeID + "] Sending follower to candidate, expecting " + strconv.Itoa(server.majority) + " votes, has: " + strconv.Itoa(len(server.candidate.Votes)))
+		// println("[" + nodeID + "] Sending follower to candidate, expecting " + strconv.Itoa(server.majority) + " votes, has: " + strconv.Itoa(len(server.candidate.Votes)))
 	}
 	msg["type"] = "request_vote"
 	for _, node := range nodeIDs {
@@ -30,9 +30,9 @@ func followerToCandidate(msg map[string]interface{}) {
 
 func leaderHeartbeat(msg map[string]interface{}) {
 	if server != nil {
-		println("["+nodeID+"] Sending heartbeat with leader_id:", server.leaderId)
+		// println("["+nodeID+"] Sending heartbeat with leader_id:", server.leaderId)
 	} else {
-		println("[" + nodeID + "] Sending initial heartbeat as leader")
+		// println("[" + nodeID + "] Sending initial heartbeat as leader")
 	}
 
 	msg["type"] = "append_entries"
@@ -42,14 +42,14 @@ func leaderHeartbeat(msg map[string]interface{}) {
 		}
 		send(nodeID, node, msg, nil)
 	}
-	println("ENDED BROADCAST HEARTBEAT")
+	// println("ENDED BROADCAST HEARTBEAT")
 }
 
 func candidateStartNewElection(msg map[string]interface{}) {
 	if server != nil {
-		println("[" + nodeID + "] Sending new election, expecting " + strconv.Itoa(server.majority) + " votes, has: " + strconv.Itoa(len(server.candidate.Votes)))
+		// println("[" + nodeID + "] Sending new election, expecting " + strconv.Itoa(server.majority) + " votes, has: " + strconv.Itoa(len(server.candidate.Votes)))
 	} else {
-		println("[" + nodeID + "] Sending new election, expecting " + strconv.Itoa(msg["majority"].(int)) + " votes, has: " + strconv.Itoa(msg["has"].(int)))
+		// println("[" + nodeID + "] Sending new election, expecting " + strconv.Itoa(msg["majority"].(int)) + " votes, has: " + strconv.Itoa(msg["has"].(int)))
 	}
 
 	msg["type"] = "request_vote"
@@ -59,7 +59,7 @@ func candidateStartNewElection(msg map[string]interface{}) {
 		}
 		send(nodeID, node, msg, nil)
 	}
-	println("ENDED BROADCAST")
+	// println("ENDED BROADCAST")
 }
 
 func main() {
@@ -279,7 +279,7 @@ func main() {
 			break
 
 		case "append_entries":
-			println("Received append entry")
+			// println("Received append entry")
 
 			// Parse all fields from the message
 			term, ok := body["term"].(float64)
@@ -348,7 +348,7 @@ func main() {
 			}
 
 			if errType == RETRY_SEND {
-				println("ERROR ON WAIT REPLICATION, RETRYING")
+				// println("ERROR ON WAIT REPLICATION, RETRYING")
 				send(nodeID, followerID, map[string]interface{}{
 					"type":           "append_entries",
 					"term":           newMsg.Term,
@@ -362,13 +362,13 @@ func main() {
 				// Process confirmed operations
 				for _, op := range confirmedOps {
 					if op.ClientMessage == nil {
-						println("No client message for confirmed operation")
+						// println("No client message for confirmed operation")
 						continue
 					}
 
 					// Send the response to the client
 					reply(*op.ClientMessage, op.Response)
-					println("Responded to client with:", op.Response["type"])
+					// println("Responded to client with:", op.Response["type"])
 				}
 			}
 			break
@@ -415,7 +415,7 @@ func broadcast(server *Server, msg map[string]interface{}, originalMessage *Mess
 		}
 		send(server.id, node, msg, originalMessage)
 	}
-	println("BROADCAST OK")
+	// println("BROADCAST OK")
 }
 
 func selectRandomLeader(server *Server) string {

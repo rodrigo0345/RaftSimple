@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 )
 
 var msgID int = 0
@@ -28,7 +27,7 @@ type InitBody struct {
 
 func send(src, dest string, body map[string]interface{}, originalMsg *MessageInternal) {
 	if src == dest {
-		log.Printf("Skipping self-send from %s to %s: %v", src, dest, body)
+		// log.Printf("Skipping self-send from %s to %s: %v", src, dest, body)
 		return
 	}
 	msgID++
@@ -47,7 +46,7 @@ func send(src, dest string, body map[string]interface{}, originalMsg *MessageInt
 	if originalMsg != nil {
 		var origBody map[string]interface{}
 		if err := json.Unmarshal(originalMsg.Body, &origBody); err != nil {
-			log.Printf("Error unmarshaling originalMsg body: %v", err)
+			// log.Printf("Error unmarshaling originalMsg body: %v", err)
 		} else {
 			delete(origBody, "original_msg")
 			cleanedOriginalMsg := MessageInternal{
@@ -57,7 +56,7 @@ func send(src, dest string, body map[string]interface{}, originalMsg *MessageInt
 			}
 			cleanedBody, err := json.Marshal(origBody)
 			if err != nil {
-				log.Printf("Error marshaling cleaned originalMsg body: %v", err)
+				// log.Printf("Error marshaling cleaned originalMsg body: %v", err)
 			} else {
 				cleanedOriginalMsg.Body = cleanedBody
 				data["body"].(map[string]interface{})["original_msg"] = cleanedOriginalMsg
@@ -66,17 +65,17 @@ func send(src, dest string, body map[string]interface{}, originalMsg *MessageInt
 	}
 	jsonData, err := json.Marshal(data)
 	if err != nil {
-		log.Printf("Error marshaling message: %v", err)
+		// log.Printf("Error marshaling message: %v", err)
 		return
 	}
-	log.Printf("sending %s", jsonData)
+	// log.Printf("sending %s", jsonData)
 	fmt.Println(string(jsonData))
 }
 
 func reply(originalMsg MessageInternal, body map[string]interface{}) {
 	var origBody map[string]interface{}
 	if err := json.Unmarshal(originalMsg.Body, &origBody); err != nil {
-		log.Printf("Error unmarshaling original body: %v", err)
+		// log.Printf("Error unmarshaling original body: %v", err)
 		return
 	}
 	responseBody := map[string]interface{}{
@@ -99,12 +98,12 @@ func getNodeID() string {
 func initNode(msg MessageInternal) {
 	var initBody InitBody
 	if err := json.Unmarshal(msg.Body, &initBody); err != nil {
-		log.Printf("Error unmarshaling init body: %v", err)
+		// log.Printf("Error unmarshaling init body: %v", err)
 		return
 	}
 	nodeIDs = initBody.NodeIDs
 	nodeID = initBody.NodeID
-	log.Printf("init: nodeIDs=%v, nodeID=%v", nodeIDs, nodeID)
+	// log.Printf("init: nodeIDs=%v, nodeID=%v", nodeIDs, nodeID)
 }
 
 func DecodeMessage(msg string) (MessageInternal, map[string]interface{}, *MessageInternal) {
@@ -114,13 +113,13 @@ func DecodeMessage(msg string) (MessageInternal, map[string]interface{}, *Messag
 		Body json.RawMessage `json:"body"`
 	}
 	if err := json.Unmarshal([]byte(msg), &fullMsg); err != nil {
-		log.Printf("Error unmarshaling message: %v", err)
+		// log.Printf("Error unmarshaling message: %v", err)
 		panic("Error unmarshaling message in DecodeMessage")
 	}
 
 	var bodyMap map[string]interface{}
 	if err := json.Unmarshal(fullMsg.Body, &bodyMap); err != nil {
-		log.Printf("Error unmarshaling body: %v", err)
+		// log.Printf("Error unmarshaling body: %v", err)
 		panic("Error unmarshaling message in DecodeMessage")
 	}
 
@@ -128,11 +127,11 @@ func DecodeMessage(msg string) (MessageInternal, map[string]interface{}, *Messag
 	if val, ok := bodyMap["original_msg"]; ok {
 		origMsgBytes, err := json.Marshal(val)
 		if err != nil {
-			log.Printf("Error marshaling original_msg: %v", err)
+			// log.Printf("Error marshaling original_msg: %v", err)
 		} else {
 			var origMsg MessageInternal
 			if err := json.Unmarshal(origMsgBytes, &origMsg); err != nil {
-				log.Printf("Error unmarshaling original_msg: %v", err)
+				// log.Printf("Error unmarshaling original_msg: %v", err)
 			} else {
 				originalMsg = &origMsg
 			}
