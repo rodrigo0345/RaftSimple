@@ -52,7 +52,7 @@ func candidateStartNewElection(msg map[string]interface{}) {
 		// println("[" + nodeID + "] Sending new election, expecting " + strconv.Itoa(msg["majority"].(int)) + " votes, has: " + strconv.Itoa(msg["has"].(int)))
 	}
 
-	msg["type"] = "request_vote"
+	// msg["type"] = "request_vote"
 	for _, node := range nodeIDs {
 		if node == nodeID {
 			continue
@@ -392,6 +392,34 @@ func main() {
 			voterID := msg.Src
 			server.candidate.HandleVoteResponse(server, voterID, term, voteGranted)
 			server.Unlock()
+			break
+
+		case "validate_term":
+			term := int(body["term"].(float64))
+			nodeId := body["node_id"].(string)
+
+			respBody := server.processTermValidation(term, nodeId)
+
+			reply(msg, respBody)
+			break
+		case "validate_term_response":
+			term := int(body["term"].(float64))
+			validatorId := body["validator"].(string)
+			isValid := body["is_valid"].(bool)
+
+			server.Lock()
+			if isValid {
+				server.validateTerm(term, validatorId, true)
+			} else {
+				// If validation fails, cancel the term increase attempt
+				if server.currentState == CANDIDATE {
+					println("\033[33m[DEFENSE] Term validation failed for term", term, "\033[0m")
+					// Stay as candidate but with current term
+					server.resetElectionTimeout()
+				}
+			}
+			server.Unlock()
+			break
 		}
 	}
 	if err := scanner.Err(); err != nil {

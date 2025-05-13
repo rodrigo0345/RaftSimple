@@ -26,15 +26,32 @@ func (f *Follower) BecomeCandidate(id string, currentTerm int, lastLogTerm int, 
 }
 
 func (f *Follower) AppendEntries(s *Server, msg AppendEntriesRequest) map[string]interface{} {
-	response := make(map[string]interface{})
+	response := make(map[string]interface {
+	})
 	response["reset_timeout"] = 0
 	response["term"] = s.currentTerm
+
+	if !s.termValidations[msg.Term][msg.LeaderID] {
+		response["term"] = s.currentTerm
+		response["success"] = false
+		println("\033[33m[DEFENSE] Node", s.id, "rejected suspicious AppendEntries term", msg.Term, "from", msg.LeaderID, "\033[0m")
+		return response
+	}
 
 	// message can be ignored that is from the past
 	if msg.Term < s.currentTerm {
 		response["term"] = s.currentTerm
 		response["success"] = false
 		return response
+	}
+
+	if s.currentState == LEADER {
+		if !s.validateTerm(msg.Term, msg.LeaderID, true) {
+			response["term"] = s.currentTerm
+			response["success"] = false
+			println("\033[33m[DEFENSE] Node", s.id, "rejected suspicious AppendEntries term", msg.Term, "from", msg.LeaderID, "\033[0m")
+			return response
+		}
 	}
 
 	if s.currentState == LEADER && msg.Term == s.currentTerm {
@@ -111,12 +128,25 @@ func (f *Follower) AppendEntries(s *Server, msg AppendEntriesRequest) map[string
 }
 
 func (f *Follower) Vote(s *Server, msg RequestVoteRequest) map[string]interface{} {
+
 	response := make(map[string]interface{})
 	if msg.Term < s.currentTerm {
 		response["term"] = s.currentTerm
 		response["vote_granted"] = false
 		return response
 	}
+
+	// suspeita de alteração indevida de termos
+	if msg.Term > s.currentTerm+3 {
+		// Check if the term is valid
+		if !s.validateTerm(msg.Term, msg.CandidateID, false) {
+			response["term"] = s.currentTerm
+			response["vote_granted"] = false
+			println("\033[33m[DEFENSE] Node", s.id, "rejected suspicious term", msg.Term, "from", msg.CandidateID, "\033[0m")
+			return response
+		}
+	}
+
 	if msg.Term > s.currentTerm {
 		s.currentTerm = msg.Term
 		s.votedFor = ""

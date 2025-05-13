@@ -90,6 +90,11 @@ type Server struct {
 	mutex               *sync.Mutex
 	pendingRequests     map[int]PendingRequest // Added to track client requests
 	leaderHeartbeatFunc func(msg map[string]interface{})
+
+	// prevent byzantine nodes from manipulating too much the term
+	// term -> map[validatorId] bool
+	termValidations map[int]map[string]bool
+	termValidQuorum int
 }
 
 func (s *Server) Lock() {
@@ -127,6 +132,10 @@ func NewServer(id string, nodes []string,
 		mutex:               &sync.Mutex{},
 		pendingRequests:     make(map[int]PendingRequest),
 		leaderHeartbeatFunc: leaderHeartbeatFunc,
+
+		// anti-byzantine
+		termValidations: make(map[int]map[string]bool),
+		termValidQuorum: len(nodes)/2 + 1,
 	}
 	s.candidate = NewCandidate(s) // Pass server instance to Candidate
 
@@ -140,12 +149,14 @@ func NewServer(id string, nodes []string,
 			switch s.currentState {
 			case FOLLOWER:
 				// println("\\033[31mTIMER GOT RESETED, NO LEADER CONTACTED\\033[0m")
-				s.becomeCandidate(candidateStartNewElection)
+				msg := s.candidate.StartElection(s.id, true)
+				candidateStartNewElection(msg)
+				// s.becomeCandidate(candidateStartNewElection)
 				s.resetElectionTimeout()
 				s.Unlock()
 				break
 			case CANDIDATE:
-				msg := s.candidate.StartElection(s.id)
+				msg := s.candidate.StartElection(s.id, true)
 				candidateStartNewElection(msg)
 				s.resetElectionTimeout()
 				s.Unlock()
@@ -170,10 +181,75 @@ func NewServer(id string, nodes []string,
 	return s
 }
 
+/////////////////////////////////
+// solução anti-term forgery
+/////////////////////////////////
+
+func (s *Server) validateTerm(term int, validatorId string, implicitSend bool) bool {
+
+	// First time seeing this term
+	if _, exists := s.termValidations[term]; !exists {
+		s.termValidations[term] = make(map[string]bool)
+	}
+	s.termValidations[term][validatorId] = true
+
+	// Count validations
+	count := len(s.termValidations[term])
+	if count >= s.termValidQuorum {
+
+		// Launch election broadcast
+		if implicitSend {
+			s.currentTerm = term
+			s.votedFor = ""
+			msg := s.candidate.StartElection(s.id, false)
+			followerToCandidateFunc := candidateStartNewElection // reuse callback
+			msg["type"] = "request_vote"
+			followerToCandidateFunc(msg)
+		}
+		return true
+	}
+	return false
+}
+
+func (s *Server) requestTermValidation(term int) map[string]interface{} {
+	return map[string]interface{}{
+		"type":    "validate_term",
+		"term":    term,
+		"node_id": s.id,
+	}
+}
+
+func (s *Server) processTermValidation(term int, nodeId string) map[string]interface{} {
+	s.Lock()
+	defer s.Unlock()
+
+	isValid := term == s.currentTerm+1
+	if isValid {
+		if _, exists := s.termValidations[term]; !exists {
+			s.termValidations[term] = make(map[string]bool)
+		}
+		s.termValidations[term][nodeId] = true
+	}
+	return map[string]interface{}{
+		"type":      "validate_term_response",
+		"term":      term,
+		"validator": s.id,
+		"is_valid":  isValid,
+	}
+}
+
+/////////////////////////////////
+// solução anti-term forgery
+/////////////////////////////////
+
 func (s *Server) becomeCandidate(followerToCandidateFunc func(msg map[string]interface{})) {
 	s.currentState = CANDIDATE
 	s.leaderId = ""
-	msg := s.candidate.StartElection(s.id)
+
+	s.termValidations[s.currentTerm+1] = make(map[string]bool)
+
+	// nesta versão alterada, envia apenas um request_validate para validar o termo
+	msg := s.candidate.StartElection(s.id, true)
 	msg["majority"] = s.majority
 	msg["has"] = len(s.candidate.Votes)
 	followerToCandidateFunc(msg)
@@ -242,12 +318,15 @@ func (s *Server) PrintLogs() {
 	s.Lock()
 	defer s.Unlock()
 
+	println("")
+	println("[State machine]")
+
 	// print if it is commited or not
 	for i, entry := range s.log {
 		if i <= s.commitIndex {
-			println("\033[32m[COMMITTED] " + entry.Command + "\033[0m")
+			println("[COMMITTED] " + entry.Command)
 		} else {
-			println("\033[31m[NOT COMMITTED] " + entry.Command + "\033[0m")
+			println("[NOT COMMITTED] " + entry.Command)
 		}
 	}
 }
@@ -302,8 +381,10 @@ func (s *Server) Write(key string, value string, originalMessage *MessageInterna
 	s.Lock()
 	defer s.Unlock()
 	if s.currentState != LEADER {
+		println("NOT LEADER")
 		return NOT_LEADER, nil, s.leaderId
 	}
+	println("Processing write")
 	return s.leader.Write(s, key, value, originalMessage, msgFrom)
 }
 
@@ -312,7 +393,9 @@ func (s *Server) Cas(key string, from string, to string, originalMessage *Messag
 	s.Lock()
 	defer s.Unlock()
 	if s.currentState != LEADER {
+		println("NOT LEADER")
 		return NOT_LEADER, nil, s.leaderId
 	}
+	println("Processing CAS")
 	return s.leader.Cas(s, key, from, to, originalMessage, msgFrom)
 }

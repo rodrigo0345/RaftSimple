@@ -1,7 +1,5 @@
 package main
 
-import "math/rand"
-
 type Candidate struct {
 	Term        int
 	Votes       map[string]int
@@ -17,8 +15,11 @@ func NewCandidate(node *Server) *Candidate {
 	}
 }
 
-func (c *Candidate) StartElection(id string) map[string]interface{} {
-	c.node.currentTerm++
+func (c *Candidate) StartElection(id string, isRequestingValidation bool) map[string]interface{} {
+
+	if isRequestingValidation {
+		c.node.currentTerm++
+	}
 	c.Term = c.node.currentTerm
 	c.Votes = map[string]int{}
 	c.Votes[id] = 1
@@ -46,7 +47,13 @@ func (c *Candidate) StartElection(id string) map[string]interface{} {
 		"last_log_index": lastLogIndex,
 		"last_log_term":  lastLogTerm,
 	}
-	return msg
+
+	if !isRequestingValidation {
+		return msg
+	}
+
+	// TODO: tentar voltar a colocar isto normal
+	return c.node.requestTermValidation(c.node.currentTerm)
 }
 
 func (c *Candidate) AcceptVote(voterId string, term int, success bool) bool {
@@ -75,9 +82,8 @@ func (c *Candidate) hasVoted(nodeId string) bool {
 
 // dar lock ao server antes
 func (c *Candidate) HandleVoteResponse(s *Server, voterId string, term int, voteGranted bool) {
-	// If the response term is higher, step down to follower
+	// 1) Se o termo da resposta for maior, passo a Follower
 	if term > c.node.currentTerm {
-		// println("STEPPING DOWN TO FOLLOWER")
 		c.node.currentTerm = term
 		c.node.currentState = FOLLOWER
 		c.node.votedFor = ""
@@ -85,47 +91,44 @@ func (c *Candidate) HandleVoteResponse(s *Server, voterId string, term int, vote
 		c.node.resetElectionTimeout()
 		return
 	}
-	// Ignore votes from different terms
+	// 2) Se for de termo diferente do meu, ignoro
 	if term != c.Term {
 		return
 	}
-	// Update vote record
+
+	// 3) Verifico se este voter participou do quorum de validação do termo
+	validations, ok := s.termValidations[term]
+	println("Term:", term)
+	println("Validations:", validations)
+
+	if !ok || !validations[voterId] {
+		// Não validou o term => voto possivelmente forjado, ignoro
+		println("\033[33m[DEFENSE] Ignoring vote from", voterId, "- term not validated\033[0m")
+		return
+	}
+
+	// 4) Registo o voto válido
 	if voteGranted {
 		c.Votes[voterId] = 1
 	} else {
 		c.Votes[voterId] = 0
 	}
 
-	// Rogue node behavior: forge votes
-	if c.node.id == "n2" && rand.Intn(2) == 0 {
-		// Add random forged votes to help become leader
-		for _, node := range c.node.nodes {
-			if node != c.node.id && !c.hasVoted(node) {
-				c.Votes[node] = 1
-				println("\033[31m[ROGUE] Candidate forged vote from " + node + "\033[0m")
-				break // Only forge one vote at a time to be subtle
-			}
+	// 5) Conto apenas votos de quem validou o termo
+	grantedCount := 0
+	for voter, v := range c.Votes {
+		if v == 1 && validations[voter] {
+			grantedCount++
 		}
 	}
 
-	// Count granted votes
-	countVotes := 0
-	for _, vote := range c.Votes {
-		if vote == 1 {
-			countVotes++
-		}
-	}
-	// Check if majority is reached
-	if countVotes >= c.NeededVotes {
-		// Transition to leader
+	// 6) Se atingir quorum de votos (NeedVotes), torno-me líder
+	if grantedCount >= c.NeededVotes {
 		c.node.currentState = LEADER
-		// println("\033[32m[" + s.id + "] IS NOW THE LEADER\033[0m")
-		if s.id == "n2" {
-			println("\033[31m[ROGUE] Node " + s.id + " has become the leader through vote manipulation!\033[0m")
-		}
 		c.node.leaderId = c.node.id
-
-		// send immidiate heartbeat
+		s.leaderId = c.node.id
+		println("\033[32m[" + s.id + "] IS NOW THE LEADER\033[0m")
+		// Envio batimento imediato
 		msg := s.leader.GetHeartbeatMessage(s, s.id)
 		go s.leaderHeartbeatFunc(msg)
 	}

@@ -96,8 +96,16 @@ func (l *Leader) Cas(s *Server, key string, from string, to string, message *Mes
 
 func (l *Leader) WaitForReplication(s *Server, followerID string, success bool, term int) (MessageType, *AppendEntriesRequest, []ConfirmedOperation) {
 	// If the leader receives a term higher than its current term, step down
+
+	// como só o lider espera pela replicacao, os terms tem de ter maioria
+	if !s.termValidations[term][followerID] {
+		return ERROR, nil, nil
+	}
+
 	if term > s.currentTerm {
 		s.currentTerm = term
+
+		println("Leader stepping down due to higher term from follower")
 		s.currentState = FOLLOWER
 		s.leaderId = ""
 		s.votedFor = ""

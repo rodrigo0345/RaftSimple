@@ -32,11 +32,11 @@ func send(src, dest string, body map[string]interface{}, originalMsg *MessageInt
 	}
 	msgID++
 	data := map[string]interface{}{
-		"src":  src,
-		"dest": dest,
 		"body": map[string]interface{}{
 			"msg_id": msgID,
 		},
+		"src":  src,
+		"dest": dest,
 	}
 	// Copy fields from the provided body
 	for k, v := range body {
