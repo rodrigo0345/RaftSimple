@@ -95,63 +95,60 @@ func (l *Leader) Cas(s *Server, key string, from string, to string, message *Mes
 }
 
 func (l *Leader) WaitForReplication(s *Server, followerID string, success bool, term int) (MessageType, *AppendEntriesRequest, []ConfirmedOperation) {
-	// If the server is no longer the leader, return appropriate message
+	println("Entering WaitForReplication for follower:", followerID, "success:", success, "term:", term, "leader term:", s.currentTerm)
+
 	if s.currentState != LEADER {
-		println("I am not the leader WaitForReplication")
+		println("Not the leader, exiting WaitForReplication")
 		return NOT_LEADER, nil, nil
 	}
+	println("Server is leader, proceeding with replication check")
 
-	// como só o lider espera pela replicacao, os terms tem de ter maioria
 	if s.currentTerm != term && !s.vs.isFollowerTermValid(followerID, CurrentTerm(s.currentTerm), term) {
-		println("WaitForReplication: term mismatch or not verified, ignoring response from", followerID)
-		// Note: Consider if this should lead to stepping down if term is higher,
-		// or if it's just an old/invalid response.
-		// The block below handles stepping down for higher terms.
+		println("Term mismatch or invalid term from follower:", followerID, "leader term:", s.currentTerm, "follower term:", term)
 		return ERROR, nil, nil
 	}
+	println("Term is valid or matches, continuing")
 
-	// If the leader receives a term higher than its current term, step down
 	if term > s.currentTerm {
+		println("Higher term detected from follower:", followerID, "new term:", term, "old term:", s.currentTerm)
 		s.currentTerm = term
-		println("WaitForReplication Leader stepping down due to higher term from follower", followerID, "new term:", s.currentTerm)
 		s.currentState = FOLLOWER
 		s.leaderId = ""
 		s.votedFor = ""
-		// Reset leader-specific volatile state (nextIndex, matchIndex are part of l *Leader)
-		// Clearing them here ensures they are re-initialized if this node becomes leader again.
 		l.nextIndex = make(map[string]int)
 		l.matchIndex = make(map[string]int)
-		return ERROR, nil, nil // Or NOT_LEADER
+		println("Leader stepping down, new state: FOLLOWER")
+		return ERROR, nil, nil
 	}
+	println("No term conflict, leader term is current or higher")
 
-	// Handle unsuccessful AppendEntries response (log inconsistency)
 	if !success {
-		println("WaitForReplication: AppendEntries failed for follower", followerID, "decrementing nextIndex")
-		// Decrement nextIndex for the follower and retry
-		if l.nextIndex[followerID] > 0 { // Ensure nextIndex doesn't go below 0
+		println("AppendEntries failed for follower:", followerID)
+		if l.nextIndex[followerID] > 0 {
 			l.nextIndex[followerID]--
-		} else if l.nextIndex[followerID] == 0 { // If nextIndex is 0, can't decrement further for valid log indices
-			// No action or specific handling if already at the start
+			println("Decremented nextIndex for follower:", followerID, "new value:", l.nextIndex[followerID])
+		} else {
+			println("nextIndex for follower:", followerID, "is already 0, no decrement")
 		}
 
-		// Prepare to send the entry at the new (decremented) nextIndex
 		nextIdxToSend := l.nextIndex[followerID]
 		prevLogIndexForRetry := nextIdxToSend - 1
 		prevLogTermForRetry := -1
+		println("Preparing retry: nextIdxToSend:", nextIdxToSend, "prevLogIndexForRetry:", prevLogIndexForRetry)
+
 		if prevLogIndexForRetry >= 0 && prevLogIndexForRetry < len(s.log) {
 			prevLogTermForRetry = s.log[prevLogIndexForRetry].Term
-		} else if prevLogIndexForRetry == -1 {
-			// prevLogTerm is implicitly -1 or 0 depending on convention for "no entry"
-			prevLogTermForRetry = -1 // Explicitly
+			println("Set prevLogTermForRetry to:", prevLogTermForRetry, "from log index:", prevLogIndexForRetry)
+		} else {
+			println("prevLogIndexForRetry out of bounds, using prevLogTermForRetry:", prevLogTermForRetry)
 		}
 
 		entriesToRetry := make([]LogEntry, 0)
-		if nextIdxToSend >= 0 && nextIdxToSend < len(s.log) { // Ensure entry exists
+		if nextIdxToSend >= 0 && nextIdxToSend < len(s.log) {
 			entriesToRetry = append(entriesToRetry, s.log[nextIdxToSend])
+			println("Added entry to retry at index:", nextIdxToSend)
 		} else {
-			// If nextIdxToSend is out of bounds (e.g. < 0 or >= len(s.log)),
-			// it implies we might need to send a heartbeat or handle an edge case.
-			// For now, if no specific entry, send empty (like a probing heartbeat).
+			println("No entries to retry, nextIdxToSend:", nextIdxToSend, "log length:", len(s.log))
 		}
 
 		retryRequest := &AppendEntriesRequest{
@@ -162,185 +159,134 @@ func (l *Leader) WaitForReplication(s *Server, followerID string, success bool, 
 			Entries:      entriesToRetry,
 			LeaderCommit: s.commitIndex,
 		}
+		println("Returning RETRY_SEND with request for follower:", followerID)
 		return RETRY_SEND, retryRequest, nil
 	}
 
-	// ----- If success is true -----
-	println("WaitForReplication: AppendEntries succeeded for follower", followerID)
+	println("AppendEntries succeeded for follower:", followerID)
 
-	// Correctly update matchIndex and nextIndex.
-	// The success implies that the follower accepted the entries in the AppendEntries RPC.
-	// We need to know what was the `prevLogIndex` and `len(entries)` of THAT RPC.
-	// Since this function doesn't have that directly, we use a common Raft approach:
-	// The leader *sent* entries starting from `old_nextIndex = l.nextIndex[followerID]`.
-	// Let's assume the successful RPC contained all entries from `old_nextIndex` up to `len(s.log)-1`.
-	// This is a simplification. A more robust way would be to know exactly what was acked.
-	//
-	// A common pattern upon success:
-	// matchIndex[followerID] = prevLogIndex_of_the_RPC + number_of_entries_in_the_RPC
-	// nextIndex[followerID] = matchIndex[followerID] + 1
-	//
-	// Given the current structure, when a CAS/Write happens, one entry is sent.
-	// Its index is len(s.log)-1 (at the time of sending). prevLogIndex was len(s.log)-2.
-	// So, matchIndex should become (len(s.log)-2) + 1 = len(s.log)-1.
-	//
-	// Heuristic: If nextIndex[followerID] was k, and leader sent log[k], and it's acked:
-	//   matchIndex[followerID] = k
-	//   nextIndex[followerID] = k + 1
-	// If it was a heartbeat success, follower is up to len(s.log)-1:
-	//   matchIndex[followerID] = len(s.log)-1
-	//   nextIndex[followerID] = len(s.log)
-
-	// Get the value of nextIndex *before* it might have been changed by a failed attempt or this success.
-	// This is tricky as this function is reacting to a response.
-	// The key is that a success implies the follower has all entries up to a certain point.
-	// We assume the success is for entries up to the leader's current log state,
-	// relative to what the leader *thought* the follower needed.
-
-	// If nextIndex[followerID] was pointing to an entry that was sent,
-	// and that RPC was successful, then matchIndex should be updated to that entry's index.
 	if _, ok := l.nextIndex[followerID]; !ok {
-		// This should not happen if initialized at leader transition. Log an error or re-initialize.
-		println("ERROR: nextIndex for follower", followerID, "not initialized!")
-		// Fallback initialization (less ideal here)
+		println("nextIndex for follower:", followerID, "not initialized")
 		lastLogIdx := -1
 		if len(s.log) > 0 {
 			lastLogIdx = len(s.log) - 1
 		}
 		l.nextIndex[followerID] = lastLogIdx + 1
-		l.matchIndex[followerID] = -1 // Default to -1
+		l.matchIndex[followerID] = -1
+		println("Initialized nextIndex[", followerID, "]=", l.nextIndex[followerID], "matchIndex[", followerID, "]=", l.matchIndex[followerID])
 	}
 
-	// If the leader's log is not empty, the follower should at least match up to the end of the leader's log upon success.
-	// This means the AppendEntries it just ACKed contained entries that brought it up to some point.
-	// The simplest model is that success makes the follower's matchIndex equal to the latest entry in the leader's log,
-	// and nextIndex one beyond that. This works if the AppendEntries was for latest entries or a heartbeat.
 	if len(s.log) > 0 {
-		// The follower has successfully replicated entries.
-		// We assume the successful AppendEntries contained entries up to the leader's current log length -1.
-		// Or it was a heartbeat confirming the follower is up-to-date.
 		newMatchIndex := len(s.log) - 1
-		if l.matchIndex[followerID] < newMatchIndex { // Only advance matchIndex
+		if l.matchIndex[followerID] < newMatchIndex {
 			l.matchIndex[followerID] = newMatchIndex
+			println("Updated matchIndex[", followerID, "] to", l.matchIndex[followerID])
+		} else {
+			println("matchIndex[", followerID, "]=", l.matchIndex[followerID], "not updated, already sufficient")
 		}
-		// Next index should always be one past the match index.
 		l.nextIndex[followerID] = l.matchIndex[followerID] + 1
-		println("Updated matchIndex[", followerID, " (success)]=", l.matchIndex[followerID], "nextIndex[", followerID, "]=", l.nextIndex[followerID])
-
-	} else { // Leader's log is empty
-		l.matchIndex[followerID] = -1 // No entries to match
-		l.nextIndex[followerID] = 0   // Next entry would be at index 0
-		println("Updated matchIndex[", followerID, " (success, empty log)]=", l.matchIndex[followerID], "nextIndex[", followerID, "]=", l.nextIndex[followerID])
+		println("Set nextIndex[", followerID, "]=", l.nextIndex[followerID])
+	} else {
+		l.matchIndex[followerID] = -1
+		l.nextIndex[followerID] = 0
+		println("Log empty, set matchIndex[", followerID, "]=", l.matchIndex[followerID], "nextIndex[", followerID, "]=", l.nextIndex[followerID])
 	}
 
-	// Determine new commit index
-	// A log entry is committed once the leader that created the entry has
-	// replicated it on a majority of the servers.
 	newCommitIndex := s.commitIndex
-	// Iterate from commitIndex + 1 up to the last index in the log
 	for index := s.commitIndex + 1; index < len(s.log); index++ {
-		// Check if the entry is from the current leader's term
+		println("Checking commit for index:", index, "term:", s.log[index].Term)
 		if s.log[index].Term != s.currentTerm {
-			// Entries from previous terms cannot be committed using this rule alone.
-			// (Raft commits entries from previous terms using a slightly different mechanism involving a current term entry)
-			// For simplicity here, we only advance commitIndex for current term entries.
+			println("Skipping index:", index, "term mismatch with current term:", s.currentTerm)
 			continue
 		}
 
-		count := 1 // Count the leader itself
+		count := 1
 		for fID, matchIdx := range l.matchIndex {
 			if fID != s.id && matchIdx >= index {
 				count++
+				println("Follower", fID, "matches index:", index, "count now:", count)
 			}
 		}
 
-		println("For log index", index, "(term", s.log[index].Term, "), replication count:", count, " (majority:", s.majority, ")")
-
+		println("Replication count for index:", index, "is", count, "majority required:", s.majority)
 		if count >= s.majority {
 			newCommitIndex = index
+			println("Index:", index, "can be committed, newCommitIndex:", newCommitIndex)
 		} else {
-			// If this entry isn't replicated on a majority, subsequent entries cannot be either.
+			println("Index:", index, "not replicated by majority, stopping commit check")
 			break
 		}
 	}
-	println("Old commit index:", s.commitIndex, "Potential new commit index:", newCommitIndex)
+	println("Commit check complete, old commitIndex:", s.commitIndex, "new commitIndex:", newCommitIndex)
 
-	// Apply entries and collect confirmed operations
 	var confirmedOps []ConfirmedOperation
 	if newCommitIndex > s.commitIndex {
 		s.commitIndex = newCommitIndex
-		println()
-		println()
 		println("Advanced commitIndex to:", s.commitIndex)
 
-		// Apply all committed entries that haven't been applied yet
 		for i := s.lastApplied + 1; i <= s.commitIndex; i++ {
-			// Ensure 'i' is within log bounds, especially if log shrinks or commitIndex is stale.
 			if i < 0 || i >= len(s.log) {
-				println("Error: trying to apply out-of-bounds log index", i, "len(log) is", len(s.log))
-				continue // or break, or handle error
+				println("Error: index", i, "out of bounds, log length:", len(s.log))
+				continue
 			}
 
 			entry := s.log[i]
 			parts := strings.Split(entry.Command, " ")
 			var response map[string]interface{}
-			var messageType Operation // Assuming Operation is an enum/string type for CAS, WRITE etc.
-			//var opSuccess bool = false // To track if the operation itself (like CAS) was successful
-
-			println("Applying to state machine: log[", i, "]=", entry.Command)
+			var messageType Operation
+			println("Applying log[", i, "]:", entry.Command)
 
 			switch parts[0] {
 			case "write":
+				println("Processing write operation")
 				if len(parts) >= 3 {
 					key := parts[1]
 					value := parts[2]
 					s.stateMachine.kv[key] = value
-					messageType = WRITE // Ensure WRITE is defined
+					messageType = WRITE
 					response = map[string]interface{}{
 						"type": "write_ok",
 					}
-					//opSuccess = true
+					println("Write applied: key=", key, "value=", value)
 				}
-				break
 
 			case "cas":
-				println("Committing CAS operation from log:", entry.Command)
+				println("Processing CAS operation:", entry.Command)
 				if len(parts) >= 4 {
 					key := parts[1]
 					from := parts[2]
 					to := parts[3]
 					currentValue, exists := s.stateMachine.kv[key]
-
 					if !exists {
-						messageType = CAS_INVALID_KEY // Ensure these constants are defined
+						messageType = CAS_INVALID_KEY
 						response = map[string]interface{}{
 							"type": "error",
-							"code": 20, // Maelstrom error code for key does not exist
+							"code": 20,
 							"text": fmt.Sprintf("CAS failed: key '%s' does not exist", key),
 						}
-					} else if fmt.Sprintf("%v", currentValue) != from { // Convert currentValue to string for comparison
+						println("CAS failed: key", key, "does not exist")
+					} else if fmt.Sprintf("%v", currentValue) != from {
 						messageType = CAS_INVALID_FROM
 						displayMessage := fmt.Sprintf("CAS failed for key '%s': current value '%v' does not match 'from' value '%s'", key, currentValue, from)
 						response = map[string]interface{}{
 							"type": "error",
-							"code": 22, // Maelstrom error code for precondition failed
+							"code": 22,
 							"text": displayMessage,
 						}
+						println("CAS failed: key=", key, "current=", currentValue, "expected=", from)
 					} else {
 						s.stateMachine.kv[key] = to
 						messageType = CAS
 						response = map[string]interface{}{
 							"type": "cas_ok",
 						}
-						// opSuccess = true
+						println("CAS succeeded: key=", key, "updated to", to)
 					}
 				}
-				break
 			}
 
-			// Record the confirmed operation if we have a client message to respond to
 			if response != nil && entry.Message != nil {
-				println("State machine applied, entry.Message found for response. Type:", response["type"])
+				println("Operation applied, response type:", response["type"], "for client message")
 				confirmedOp := ConfirmedOperation{
 					ClientMessage: entry.Message,
 					MessageFrom:   entry.MessageFrom,
@@ -349,11 +295,13 @@ func (l *Leader) WaitForReplication(s *Server, followerID string, success bool, 
 				}
 				confirmedOps = append(confirmedOps, confirmedOp)
 			} else if entry.Message != nil {
-				println("State machine applied, entry.Message found BUT no response generated for op:", entry.Command)
+				println("Operation applied but no response generated for command:", entry.Command)
 			}
 			s.lastApplied = i
+			println("Updated lastApplied to:", s.lastApplied)
 		}
 	}
 
-	return WRITE_OK, nil, confirmedOps // WRITE_OK here might just mean "operation processed" not specific to write
+	println("Exiting WaitForReplication, returning WRITE_OK for follower:", followerID, "with", len(confirmedOps), "confirmed operations")
+	return WRITE_OK, nil, confirmedOps
 }
