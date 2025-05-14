@@ -342,13 +342,14 @@ func main() {
 
 			errType, newMsg, confirmedOps := server.WaitForReplication(followerID, success, term)
 			if errType == NOT_LEADER {
+				fmt.Fprintf(os.Stderr, "Node %s is not the leader\n", nodeID)
 				// panic("Message received but no longer leader")
 				// Ignore the message
 				break
 			}
 
 			if errType == RETRY_SEND {
-				// println("ERROR ON WAIT REPLICATION, RETRYING")
+				println("ERROR ON WAIT REPLICATION, RETRYING")
 				send(nodeID, followerID, map[string]interface{}{
 					"type":           "append_entries",
 					"term":           newMsg.Term,
@@ -362,11 +363,12 @@ func main() {
 				// Process confirmed operations
 				for _, op := range confirmedOps {
 					if op.ClientMessage == nil {
-						// println("No client message for confirmed operation")
+						println("No client message for confirmed operation")
 						continue
 					}
 
 					// Send the response to the client
+					println("Sending response to client:", op.ClientMessage.Src)
 					reply(*op.ClientMessage, op.Response)
 					// println("Responded to client with:", op.Response["type"])
 				}

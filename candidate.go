@@ -135,9 +135,26 @@ func (c *Candidate) HandleVoteResponse(s *Server, voterId string, term int, vote
 		c.node.leaderId = c.node.id
 		s.leaderId = c.node.id
 		println("\033[32m[" + s.id + "] IS NOW THE LEADER\033[0m")
+
+		// Initialize nextIndex and matchIndex for all followers
+		lastLogIndex := -1
+		if len(s.log) > 0 {
+			lastLogIndex = len(s.log) - 1
+		}
+		for _, nodeStr := range s.nodes {
+			if nodeStr == s.id {
+				continue
+			}
+			// nextIndex is the index of the next log entry to send to that follower
+			s.leader.nextIndex[nodeStr] = lastLogIndex + 1
+			// matchIndex is the index of the highest log entry known to be replicated on server
+			s.leader.matchIndex[nodeStr] = -1 // For 0-indexed logs, -1 means nothing replicated yet
+			println("Initialized for follower", nodeStr, ": nextIndex =", s.leader.nextIndex[nodeStr], ", matchIndex =", s.leader.matchIndex[nodeStr])
+		}
+
 		// Envio batimento imediato
 		msg := s.leader.GetHeartbeatMessage(s, s.id)
-		go s.leaderHeartbeatFunc(msg)
+		go s.leaderHeartbeatFunc(msg) // Ensure this is the correct callback from main.go
 	}
 }
 

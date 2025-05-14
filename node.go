@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"math/rand"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -141,6 +142,7 @@ func NewServer(id string, nodes []string,
 	go func() {
 		for {
 			<-s.timer.C
+			fmt.Fprintf(os.Stderr, "\033[33mNode %s: Timer expired, current state: %d\033[0m\n", s.id, s.currentState)
 			s.Lock()
 			switch s.currentState {
 			case FOLLOWER:
@@ -379,7 +381,7 @@ type ConfirmedOperation struct {
 
 func (s *Server) WaitForReplication(followerID string, success bool, followerTerm int) (MessageType, *AppendEntriesRequest, []ConfirmedOperation) {
 	// println("\033[32mNode " + s.id + " is processing wait for replication\033[0m\n")
-	s.PrintLogs()
+	// s.PrintLogs()
 
 	s.Lock()
 	defer s.Unlock()
