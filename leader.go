@@ -94,11 +94,18 @@ func (l *Leader) Cas(s *Server, key string, from string, to string, message *Mes
 	}, ""
 }
 
+// TODO: isto tem ganda bug
 func (l *Leader) WaitForReplication(s *Server, followerID string, success bool, term int) (MessageType, *AppendEntriesRequest, []ConfirmedOperation) {
 	// If the leader receives a term higher than its current term, step down
 
+	// If the server is no longer the leader, return appropriate message
+	if s.currentState != LEADER {
+		return NOT_LEADER, nil, nil
+	}
+
 	// como só o lider espera pela replicacao, os terms tem de ter maioria
-	if !s.termValidations[term][followerID] {
+	if s.currentTerm != term && !s.vs.isFollowerTermValid(followerID, CurrentTerm(s.currentTerm), term) {
+		println("\033[33m[DEFENSE] Node", s.id, "rejected suspicious replication term", term, "from", followerID, "\033[0m")
 		return ERROR, nil, nil
 	}
 
@@ -110,11 +117,6 @@ func (l *Leader) WaitForReplication(s *Server, followerID string, success bool, 
 		s.leaderId = ""
 		s.votedFor = ""
 		return ERROR, nil, nil
-	}
-
-	// If the server is no longer the leader, return appropriate message
-	if s.currentState != LEADER {
-		return NOT_LEADER, nil, nil
 	}
 
 	// Handle unsuccessful AppendEntries response (log inconsistency)

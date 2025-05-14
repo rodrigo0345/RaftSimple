@@ -407,9 +407,8 @@ func main() {
 			validatorId := body["validator"].(string)
 			isValid := body["is_valid"].(bool)
 
-			server.Lock()
 			if isValid {
-				server.validateTerm(term, validatorId, true)
+				server.validateTerm(term, validatorId, isValid, true)
 			} else {
 				// If validation fails, cancel the term increase attempt
 				if server.currentState == CANDIDATE {
@@ -418,7 +417,6 @@ func main() {
 					server.resetElectionTimeout()
 				}
 			}
-			server.Unlock()
 			break
 		}
 	}

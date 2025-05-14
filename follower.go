@@ -26,12 +26,11 @@ func (f *Follower) BecomeCandidate(id string, currentTerm int, lastLogTerm int, 
 }
 
 func (f *Follower) AppendEntries(s *Server, msg AppendEntriesRequest) map[string]interface{} {
-	response := make(map[string]interface {
-	})
+	response := make(map[string]interface{})
 	response["reset_timeout"] = 0
 	response["term"] = s.currentTerm
 
-	if !s.termValidations[msg.Term][msg.LeaderID] {
+	if !s.vs.isProposerTermValid(msg.LeaderID, CurrentTerm(s.currentTerm-1), msg.Term) {
 		response["term"] = s.currentTerm
 		response["success"] = false
 		println("\033[33m[DEFENSE] Node", s.id, "rejected suspicious AppendEntries term", msg.Term, "from", msg.LeaderID, "\033[0m")
@@ -40,21 +39,21 @@ func (f *Follower) AppendEntries(s *Server, msg AppendEntriesRequest) map[string
 
 	// message can be ignored that is from the past
 	if msg.Term < s.currentTerm {
+		println("\033[33m[DEFENSE] Node", s.id, "rejected AppendEntries term", msg.Term, "from", msg.LeaderID, "\033[0m")
 		response["term"] = s.currentTerm
 		response["success"] = false
 		return response
 	}
 
 	if s.currentState == LEADER {
-		if !s.validateTerm(msg.Term, msg.LeaderID, true) {
-			response["term"] = s.currentTerm
-			response["success"] = false
-			println("\033[33m[DEFENSE] Node", s.id, "rejected suspicious AppendEntries term", msg.Term, "from", msg.LeaderID, "\033[0m")
-			return response
-		}
+		response["term"] = s.currentTerm
+		response["success"] = false
+		println("\033[33m[DEFENSE] Node", s.id, "rejected suspicious AppendEntries term", msg.Term, "from", msg.LeaderID, "\033[0m")
+		return response
 	}
 
 	if s.currentState == LEADER && msg.Term == s.currentTerm {
+		println("\033[33m[DEFENSE] Node", s.id, "rejected AppendEntries term", msg.Term, "from", msg.LeaderID, "\033[0m")
 		response["term"] = s.currentTerm
 		response["success"] = false
 		return response
@@ -137,14 +136,11 @@ func (f *Follower) Vote(s *Server, msg RequestVoteRequest) map[string]interface{
 	}
 
 	// suspeita de alteração indevida de termos
-	if msg.Term > s.currentTerm+3 {
-		// Check if the term is valid
-		if !s.validateTerm(msg.Term, msg.CandidateID, false) {
-			response["term"] = s.currentTerm
-			response["vote_granted"] = false
-			println("\033[33m[DEFENSE] Node", s.id, "rejected suspicious term", msg.Term, "from", msg.CandidateID, "\033[0m")
-			return response
-		}
+	if !s.vs.isProposerTermValid(msg.CandidateID, CurrentTerm(s.currentTerm), msg.Term) {
+		response["term"] = s.currentTerm
+		response["vote_granted"] = false
+		println("\033[33m[DEFENSE] Node", s.id, "rejected suspicious vote term", msg.Term, "from", msg.CandidateID, "\033[0m")
+		return response
 	}
 
 	if msg.Term > s.currentTerm {

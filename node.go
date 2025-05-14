@@ -91,10 +91,7 @@ type Server struct {
 	pendingRequests     map[int]PendingRequest // Added to track client requests
 	leaderHeartbeatFunc func(msg map[string]interface{})
 
-	// prevent byzantine nodes from manipulating too much the term
-	// term -> map[validatorId] bool
-	termValidations map[int]map[string]bool
-	termValidQuorum int
+	vs *ValidationStore
 }
 
 func (s *Server) Lock() {
@@ -134,8 +131,7 @@ func NewServer(id string, nodes []string,
 		leaderHeartbeatFunc: leaderHeartbeatFunc,
 
 		// anti-byzantine
-		termValidations: make(map[int]map[string]bool),
-		termValidQuorum: len(nodes)/2 + 1,
+		vs: newValidationStore(),
 	}
 	s.candidate = NewCandidate(s) // Pass server instance to Candidate
 
@@ -149,14 +145,14 @@ func NewServer(id string, nodes []string,
 			switch s.currentState {
 			case FOLLOWER:
 				// println("\\033[31mTIMER GOT RESETED, NO LEADER CONTACTED\\033[0m")
-				msg := s.candidate.StartElection(s.id, true)
+				msg := s.candidate.StartElection(s, s.id, true)
 				candidateStartNewElection(msg)
 				// s.becomeCandidate(candidateStartNewElection)
 				s.resetElectionTimeout()
 				s.Unlock()
 				break
 			case CANDIDATE:
-				msg := s.candidate.StartElection(s.id, true)
+				msg := s.candidate.StartElection(s, s.id, true)
 				candidateStartNewElection(msg)
 				s.resetElectionTimeout()
 				s.Unlock()
@@ -185,33 +181,54 @@ func NewServer(id string, nodes []string,
 // solução anti-term forgery
 /////////////////////////////////
 
-func (s *Server) validateTerm(term int, validatorId string, implicitSend bool) bool {
+// TODO: a logica aqui está errada
+func (s *Server) validateTerm(term int, validatorId string, isValid bool, implicitSend bool) bool {
+	s.Lock()
+	defer s.Unlock()
+
+	// se neste ponto já tem maioria, é sinal que já enviou o request_vote
+	// esta variavel é para evitar que o leader envie duplicados
+	stop := s.vs.hasMajorityAccepted(s, CurrentTerm(s.currentTerm+1))
 
 	// First time seeing this term
-	if _, exists := s.termValidations[term]; !exists {
-		s.termValidations[term] = make(map[string]bool)
-	}
-	s.termValidations[term][validatorId] = true
+	s.vs.addValidationProposer(validatorId, CurrentTerm(s.currentTerm+1), term, isValid)
 
-	// Count validations
-	count := len(s.termValidations[term])
-	if count >= s.termValidQuorum {
-
+	if !stop && s.vs.hasMajorityAccepted(s, CurrentTerm(s.currentTerm+1)) {
 		// Launch election broadcast
 		if implicitSend {
+			// only set currentTerm when a majority is reached
 			s.currentTerm = term
 			s.votedFor = ""
-			msg := s.candidate.StartElection(s.id, false)
+			msg := s.candidate.StartElection(s, s.id, false)
 			followerToCandidateFunc := candidateStartNewElection // reuse callback
 			msg["type"] = "request_vote"
 			followerToCandidateFunc(msg)
 		}
 		return true
 	}
+
+	if stop {
+		return false
+	}
+
+	receivedMajorityTerm := s.vs.hasMajorityRefused(s, CurrentTerm(s.currentTerm+1))
+	if receivedMajorityTerm > -1 {
+		println("\033[31m[ROGUE] Node", s.id, "received majority of refusals for term", term, "\033[0m")
+		s.currentTerm = receivedMajorityTerm
+		s.votedFor = ""
+		s.currentState = FOLLOWER
+		s.leaderId = ""
+		s.resetElectionTimeout()
+		return true
+	}
+
 	return false
 }
 
 func (s *Server) requestTermValidation(term int) map[string]interface{} {
+	// vote on self
+	s.vs.voteForSelf(s.id, CurrentTerm(term))
+
 	return map[string]interface{}{
 		"type":    "validate_term",
 		"term":    term,
@@ -223,13 +240,7 @@ func (s *Server) processTermValidation(term int, nodeId string) map[string]inter
 	s.Lock()
 	defer s.Unlock()
 
-	isValid := term == s.currentTerm+1
-	if isValid {
-		if _, exists := s.termValidations[term]; !exists {
-			s.termValidations[term] = make(map[string]bool)
-		}
-		s.termValidations[term][nodeId] = true
-	}
+	isValid := s.vs.addValidationFollower(nodeId, CurrentTerm(s.currentTerm), term)
 	return map[string]interface{}{
 		"type":      "validate_term_response",
 		"term":      term,
@@ -245,11 +256,10 @@ func (s *Server) processTermValidation(term int, nodeId string) map[string]inter
 func (s *Server) becomeCandidate(followerToCandidateFunc func(msg map[string]interface{})) {
 	s.currentState = CANDIDATE
 	s.leaderId = ""
-
-	s.termValidations[s.currentTerm+1] = make(map[string]bool)
+	s.currentTerm += 1
 
 	// nesta versão alterada, envia apenas um request_validate para validar o termo
-	msg := s.candidate.StartElection(s.id, true)
+	msg := s.candidate.StartElection(s, s.id, true)
 	msg["majority"] = s.majority
 	msg["has"] = len(s.candidate.Votes)
 	followerToCandidateFunc(msg)
