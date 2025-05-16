@@ -183,7 +183,6 @@ func NewServer(id string, nodes []string,
 // solução anti-term forgery
 /////////////////////////////////
 
-// TODO: a logica aqui está errada
 func (s *Server) validateTerm(term int, validatorId string, isValid bool, implicitSend bool) bool {
 	s.Lock()
 	defer s.Unlock()
