@@ -84,7 +84,7 @@ func (f *Follower) AppendEntries(s *Server, msg AppendEntriesRequest) map[string
 			s.commitIndex = lastNewEntryIndex
 		}
 
-		// aplica tudo que tenha sido commit à máquina de estados do follower
+		// aplica tudo que tenha sido commit à máquina de estados do follower, não aplica read
 		for i := s.lastApplied + 1; i <= s.commitIndex; i++ {
 			entry := s.log[i]
 			parts := strings.Split(entry.Command, " ")

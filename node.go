@@ -21,7 +21,7 @@ type LogEntry struct {
 
 // KeyValueStore is the state machine for the Raft system
 type KeyValueStore struct {
-	kv map[string]any
+	kv map[string]string
 }
 
 func (s *KeyValueStore) ToString() string {
@@ -93,12 +93,12 @@ type Server struct {
 }
 
 func (s *Server) Lock() {
-	println("\033[31mNode " + s.id + " is locking\033[0m\n")
+	// println("\033[31mNode " + s.id + " is locking\033[0m\n")
 	s.mutex.Lock()
 }
 
 func (s *Server) Unlock() {
-	println("\033[32mNode " + s.id + " is unlocking\033[0m\n")
+	// println("\033[32mNode " + s.id + " is unlocking\033[0m\n")
 	s.mutex.Unlock()
 }
 
@@ -106,7 +106,7 @@ func (s *Server) Unlock() {
 func NewServer(id string, nodes []string,
 	leaderHeartbeatFunc func(msg map[string]interface{}),
 	candidateStartNewElection func(msg map[string]interface{})) *Server {
-	kv := &KeyValueStore{kv: map[string]any{}}
+	kv := &KeyValueStore{kv: map[string]string{}}
 	leader := NewLeader()
 	follower := NewFollower()
 	s := &Server{
@@ -139,7 +139,7 @@ func NewServer(id string, nodes []string,
 			s.Lock()
 			switch s.currentState {
 			case FOLLOWER:
-				println("\\033[31mTIMER GOT RESETED, NO LEADER CONTACTED\\033[0m")
+				// println("\\033[31mTIMER GOT RESETED, NO LEADER CONTACTED\\033[0m")
 				s.becomeCandidate(candidateStartNewElection)
 				s.resetElectionTimeout()
 				s.Unlock()
@@ -151,7 +151,7 @@ func NewServer(id string, nodes []string,
 				s.Unlock()
 				break
 			case LEADER:
-				println("\\033[31mLEADER IS SENDING ANOTHER HEARTBEAT\\033[0m")
+				// println("\\033[31mLEADER IS SENDING ANOTHER HEARTBEAT\\033[0m")
 				msg := s.leader.GetHeartbeatMessage(s, s.id)
 				s.resetLeaderTimeout()
 				s.Unlock()
@@ -184,13 +184,13 @@ func (s *Server) resetElectionTimeout() {
 	minTimeout := 150
 	maxTimeout := 300
 	timeout := minTimeout + rand.Intn(maxTimeout-minTimeout)
-	println("RESETTING ELECTION TIMEOUT TO", timeout, "ms")
+	// println("RESETTING ELECTION TIMEOUT TO", timeout, "ms")
 	s.timer.Reset(time.Millisecond * time.Duration(timeout))
 }
 
 func (s *Server) resetLeaderTimeout() {
-	value := 20
-	println("RESETTING LEADER TIMEOUT TO", value, "ms")
+	value := 100
+	// println("RESETTING LEADER TIMEOUT TO", value, "ms")
 	s.timer.Reset(time.Millisecond * time.Duration(value))
 }
 
@@ -221,7 +221,7 @@ type AppendEntriesRequest struct {
 
 // AppendEntries handles log replication from the leader
 func (s *Server) AppendEntries(msg AppendEntriesRequest) map[string]interface{} {
-	println("\033[32mNode " + s.id + " is processing append entry\033[0m\n")
+	// println("\033[32mNode " + s.id + " is processing append entry\033[0m\n")
 	s.Lock()
 	defer s.Unlock()
 	msgToReturn := s.follower.AppendEntries(s, msg)
@@ -231,28 +231,11 @@ func (s *Server) AppendEntries(msg AppendEntriesRequest) map[string]interface{} 
 	return msgToReturn
 }
 
-// Read retrieves a value from the key-value store
-func (s *Server) Read(key string) (MessageType, any) {
-	println("\033[32mNode " + s.id + " is processing a read\033[0m\n")
-
-	println("[State machine]")
-	println(s.stateMachine.ToString())
-	s.Lock()
-	defer s.Unlock()
-
-	if s.currentState != LEADER {
-		return NOT_LEADER, key
-	}
-
-	// acho que vou ter de mudar isto para ser apenas o lider a fazer,
-	// caso contrario, acho que não é linearizable
-	return READ_OK, s.stateMachine.kv[key]
-}
-
 // WaitForReplication processes follower responses for replication
 
 const (
 	CAS                 = "CAS"
+	READ                = "READ"
 	WRITE               = "WRITE"
 	CAS_INVALID_KEY     = "INVALID_KEY"
 	CAS_INVALID_FROM    = "INVALID_FROM"
@@ -268,14 +251,14 @@ type ConfirmedOperation struct {
 }
 
 func (s *Server) WaitForReplication(followerID string, success bool, followerTerm int) (MessageType, *AppendEntriesRequest, []ConfirmedOperation) {
-	println("\033[32mNode " + s.id + " is processing wait for replication\033[0m\n")
+	// println("\033[32mNode " + s.id + " is processing wait for replication\033[0m\n")
 	s.Lock()
 	defer s.Unlock()
 	return s.leader.WaitForReplication(s, followerID, success, followerTerm)
 }
 
 func (s *Server) Write(key string, value string, originalMessage *MessageInternal, msgFrom string) (MessageType, *AppendEntriesRequest, string) {
-	println("\033[32mNode " + s.id + " is processing a write\033[0m\n")
+	// println("\033[32mNode " + s.id + " is processing a write\033[0m\n")
 	s.Lock()
 	defer s.Unlock()
 	if s.currentState != LEADER {
@@ -284,8 +267,18 @@ func (s *Server) Write(key string, value string, originalMessage *MessageInterna
 	return s.leader.Write(s, key, value, originalMessage, msgFrom)
 }
 
+func (s *Server) Read(key string, originalMessage *MessageInternal, msgFrom string) (MessageType, *AppendEntriesRequest, string) {
+	// println("\033[32mNode " + s.id + " is processing a read\033[0m\n")
+	s.Lock()
+	defer s.Unlock()
+	if s.currentState != LEADER {
+		return NOT_LEADER, nil, s.leaderId
+	}
+	return s.leader.Read(s, key, originalMessage, msgFrom)
+}
+
 func (s *Server) Cas(key string, from string, to string, originalMessage *MessageInternal, msgFrom string) (MessageType, *AppendEntriesRequest, string) {
-	println("\033[32mNode " + s.id + " is processing a CAS\033[0m\n")
+	// println("\033[32mNode " + s.id + " is processing a CAS\033[0m\n")
 	s.Lock()
 	defer s.Unlock()
 	if s.currentState != LEADER {

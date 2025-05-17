@@ -28,7 +28,7 @@ type InitBody struct {
 
 func send(src, dest string, body map[string]interface{}, originalMsg *MessageInternal) {
 	if src == dest {
-		log.Printf("Skipping self-send from %s to %s: %v", src, dest, body)
+		// log.Printf("Skipping self-send from %s to %s: %v", src, dest, body)
 		return
 	}
 	msgID++
@@ -69,7 +69,7 @@ func send(src, dest string, body map[string]interface{}, originalMsg *MessageInt
 		log.Printf("Error marshaling message: %v", err)
 		return
 	}
-	log.Printf("sending %s", jsonData)
+	// log.Printf("sending %s", jsonData)
 	fmt.Println(string(jsonData))
 }
 

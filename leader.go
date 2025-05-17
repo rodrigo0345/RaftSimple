@@ -2,19 +2,22 @@ package main
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 )
 
 type Leader struct {
 	// for each node there is a nextIndex
-	nextIndex  map[string]int
-	matchIndex map[string]int
+	nextIndex         map[string]int
+	matchIndex        map[string]int
+	respondedMessages map[*MessageInternal]bool // Tracks messages already responded to
 }
 
 func NewLeader() *Leader {
 	return &Leader{
-		nextIndex:  map[string]int{},
-		matchIndex: map[string]int{},
+		nextIndex:         map[string]int{},
+		matchIndex:        map[string]int{},
+		respondedMessages: make(map[*MessageInternal]bool),
 	}
 }
 
@@ -36,6 +39,34 @@ func (l *Leader) GetHeartbeatMessage(s *Server, id string) map[string]interface{
 		"leader_commit":  s.commitIndex,
 		"entries":        []LogEntry{},
 	}
+}
+
+func (l *Leader) Read(s *Server, key string, clientMessage *MessageInternal, msgFrom string) (MessageType, *AppendEntriesRequest, string) {
+	// Create the read log entry without checking the current value
+	// The check will be done when the entry is applied
+	entry := LogEntry{
+		Term:        s.currentTerm,
+		Index:       len(s.log),
+		Command:     "noop " + key,
+		Message:     clientMessage,
+		MessageFrom: msgFrom,
+	}
+	s.log = append(s.log, entry)
+
+	prevLogIndex := len(s.log) - 2
+	prevLogTerm := -1
+	if prevLogIndex >= 0 {
+		prevLogTerm = s.log[prevLogIndex].Term
+	}
+
+	return READ_OK, &AppendEntriesRequest{
+		Term:         s.currentTerm,
+		LeaderID:     s.id,
+		PrevLogIndex: prevLogIndex,
+		PrevLogTerm:  prevLogTerm,
+		Entries:      []LogEntry{entry},
+		LeaderCommit: s.commitIndex,
+	}, ""
 }
 
 func (l *Leader) Write(s *Server, key string, value string, clientMessage *MessageInternal, msgFrom string) (MessageType, *AppendEntriesRequest, string) {
@@ -196,6 +227,30 @@ func (l *Leader) WaitForReplication(s *Server, followerID string, success bool, 
 						"type": "write_ok",
 					}
 				}
+				break
+
+			case "noop":
+				if len(parts) >= 2 {
+					key := parts[1]
+					var value string
+					var exists bool
+
+					value, exists = s.stateMachine.kv[key]
+					if exists {
+						valueInt, _ := strconv.Atoi(value)
+						response = map[string]interface{}{
+							"type":  "read_ok",
+							"value": valueInt,
+						}
+					} else {
+						response = map[string]interface{}{
+							"type":  "read_ok",
+							"value": nil,
+						}
+					}
+					messageType = READ
+				}
+				break
 
 			case "cas":
 				if len(parts) >= 4 {
@@ -225,13 +280,12 @@ func (l *Leader) WaitForReplication(s *Server, followerID string, success bool, 
 						response = map[string]interface{}{
 							"type": "cas_ok",
 						}
-						success = true
 					}
 				}
 			}
 
-			// Record the confirmed operation if we have a client message to respond to
-			if response != nil && entry.Message != nil {
+			// Record the confirmed operation only if we have a client message and haven't responded yet
+			if response != nil && entry.Message != nil && !l.respondedMessages[entry.Message] {
 				confirmedOp := ConfirmedOperation{
 					ClientMessage: entry.Message,
 					MessageFrom:   entry.MessageFrom,
@@ -239,6 +293,7 @@ func (l *Leader) WaitForReplication(s *Server, followerID string, success bool, 
 					Response:      response,
 				}
 				confirmedOps = append(confirmedOps, confirmedOp)
+				l.respondedMessages[entry.Message] = true // Mark as responded
 			}
 			s.lastApplied = i
 		}
