@@ -93,6 +93,9 @@ type Server struct {
 }
 
 func (s *Server) Lock() {
+	if s.mutex == nil {
+		s.mutex = &sync.Mutex{}
+	}
 	// println("\033[31mNode " + s.id + " is locking\033[0m\n")
 	s.mutex.Lock()
 }
