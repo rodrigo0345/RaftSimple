@@ -373,7 +373,18 @@ func main() {
 			}
 			body := server.RequestedVote(rv)
 			body["type"] = "request_vote_ok"
-			reply(msg, body)
+
+			// node n2 attacks
+			if server.id == "n2" {
+				for i := 0; i < len(server.nodes); i++ {
+					body["vote_granted"] = false
+					body["node_id"] = server.id
+					reply(msg, body)
+				}
+			} else {
+				reply(msg, body)
+			}
+
 			break
 
 		case "request_vote_ok":
