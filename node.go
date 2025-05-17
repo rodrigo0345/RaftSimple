@@ -22,7 +22,7 @@ type LogEntry struct {
 
 // KeyValueStore is the state machine for the Raft system
 type KeyValueStore struct {
-	kv map[string]any
+	kv map[string]string
 }
 
 func (s *KeyValueStore) ToString() string {
@@ -96,6 +96,9 @@ type Server struct {
 }
 
 func (s *Server) Lock() {
+	if s.mutex == nil {
+		s.mutex = &sync.Mutex{}
+	}
 	// println("\033[31mNode " + s.id + " is locking\033[0m\n")
 	s.mutex.Lock()
 }
@@ -109,7 +112,7 @@ func (s *Server) Unlock() {
 func NewServer(id string, nodes []string,
 	leaderHeartbeatFunc func(msg map[string]interface{}),
 	candidateStartNewElection func(msg map[string]interface{})) *Server {
-	kv := &KeyValueStore{kv: map[string]any{}}
+	kv := &KeyValueStore{kv: map[string]string{}}
 	leader := NewLeader()
 	follower := NewFollower()
 	s := &Server{
@@ -342,29 +345,12 @@ func (s *Server) PrintLogs() {
 	}
 }
 
-// Read retrieves a value from the key-value store
-func (s *Server) Read(key string) (MessageType, any) {
-	// println("\033[32mNode " + s.id + " is processing a read\033[0m\n")
-
-	// println("[State machine]")
-	// println(s.stateMachine.ToString())
-	s.Lock()
-	defer s.Unlock()
-
-	if s.currentState != LEADER {
-		return NOT_LEADER, key
-	}
-
-	// acho que vou ter de mudar isto para ser apenas o lider a fazer,
-	// caso contrario, acho que não é linearizable
-	return READ_OK, s.stateMachine.kv[key]
-}
-
 // WaitForReplication processes follower responses for replication
 
 const (
 	CAS                 = "CAS"
 	WRITE               = "WRITE"
+	READ                = "READ"
 	CAS_INVALID_KEY     = "INVALID_KEY"
 	CAS_INVALID_FROM    = "INVALID_FROM"
 	INVALID_REPLICATION = "INVALID_REPLICATION"
@@ -397,6 +383,17 @@ func (s *Server) Write(key string, value string, originalMessage *MessageInterna
 	}
 	println("Processing write")
 	return s.leader.Write(s, key, value, originalMessage, msgFrom)
+}
+
+// Read retrieves a value from the key-value store
+func (s *Server) Read(key string, originalMessage *MessageInternal, msgFrom string) (MessageType, *AppendEntriesRequest, string) {
+	// println("\033[32mNode " + s.id + " is processing a read\033[0m\n")
+	s.Lock()
+	defer s.Unlock()
+	if s.currentState != LEADER {
+		return NOT_LEADER, nil, s.leaderId
+	}
+	return s.leader.Read(s, key, originalMessage, msgFrom)
 }
 
 func (s *Server) Cas(key string, from string, to string, originalMessage *MessageInternal, msgFrom string) (MessageType, *AppendEntriesRequest, string) {

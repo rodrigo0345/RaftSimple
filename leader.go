@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -61,6 +62,34 @@ func (l *Leader) Write(s *Server, key string, value string, clientMessage *Messa
 		PrevLogIndex: prevLogIndex,
 		PrevLogTerm:  prevLogTerm,
 		Entries:      []LogEntry{entry}, // Send the new entry
+		LeaderCommit: s.commitIndex,
+	}, ""
+}
+
+func (l *Leader) Read(s *Server, key string, clientMessage *MessageInternal, msgFrom string) (MessageType, *AppendEntriesRequest, string) {
+	// Create the read log entry without checking the current value
+	// The check will be done when the entry is applied
+	entry := LogEntry{
+		Term:        s.currentTerm,
+		Index:       len(s.log),
+		Command:     "noop " + key,
+		Message:     clientMessage,
+		MessageFrom: msgFrom,
+	}
+	s.log = append(s.log, entry)
+
+	prevLogIndex := len(s.log) - 2
+	prevLogTerm := -1
+	if prevLogIndex >= 0 {
+		prevLogTerm = s.log[prevLogIndex].Term
+	}
+
+	return READ_OK, &AppendEntriesRequest{
+		Term:         s.currentTerm,
+		LeaderID:     s.id,
+		PrevLogIndex: prevLogIndex,
+		PrevLogTerm:  prevLogTerm,
+		Entries:      []LogEntry{entry},
 		LeaderCommit: s.commitIndex,
 	}, ""
 }
@@ -249,6 +278,29 @@ func (l *Leader) WaitForReplication(s *Server, followerID string, success bool, 
 					}
 					println("Write applied: key=", key, "value=", value)
 				}
+
+			case "noop":
+				if len(parts) >= 2 {
+					key := parts[1]
+					var value string
+					var exists bool
+
+					value, exists = s.stateMachine.kv[key]
+					if exists {
+						valueInt, _ := strconv.Atoi(value)
+						response = map[string]interface{}{
+							"type":  "read_ok",
+							"value": valueInt,
+						}
+					} else {
+						response = map[string]interface{}{
+							"type":  "read_ok",
+							"value": nil,
+						}
+					}
+					messageType = READ
+				}
+				break
 
 			case "cas":
 				println("Processing CAS operation:", entry.Command)
