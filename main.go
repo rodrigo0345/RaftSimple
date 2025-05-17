@@ -226,10 +226,20 @@ func main() {
 		case "read":
 			keyFloat := body["key"].(float64)
 			key := fmt.Sprintf("%v", keyFloat)
-			ec, value := server.Read(key)
 
-			if ec == NOT_LEADER {
-				leaderId := server.leaderId
+			originalMsg := &msg
+			if clientMsg != nil {
+				originalMsg = clientMsg
+			}
+
+			msgFrom := ""
+			if strings.Contains(msg.Src, "n") {
+				msgFrom = msg.Src
+			}
+
+			msgType, appendReq, leaderId := server.Read(key, originalMsg, msgFrom)
+
+			if msgType == NOT_LEADER {
 				if leaderId == "" {
 					leaderId = selectRandomLeader(server)
 				}
@@ -243,38 +253,30 @@ func main() {
 				break
 			}
 
-			// Send read response
-			resp := map[string]interface{}{
-				"type": "read_ok",
+			if msgType == ERROR {
+				reply(*originalMsg, map[string]interface{}{
+					"type": "error",
+				})
 			}
 
-			if value == nil || value == "" {
-				resp["value"] = nil
-			} else {
-				strValue, ok := value.(string)
-				if !ok {
-					reply(msg, map[string]interface{}{
-						"type": "error",
-						"text": "Value is not a string",
-					})
-					break
+			if msgType == READ_OK {
+				appendEntriesRequest := map[string]interface{}{
+					"term":           appendReq.Term,
+					"entries":        appendReq.Entries,
+					"leader_id":      appendReq.LeaderID,
+					"leader_commit":  appendReq.LeaderCommit,
+					"prev_log_index": appendReq.PrevLogIndex,
+					"prev_log_term":  appendReq.PrevLogTerm,
+					"type":           "append_entries",
 				}
 
-				intValue, err := strconv.Atoi(strValue)
-				if err != nil {
-					reply(msg, map[string]interface{}{
-						"type": "error",
-						"text": "Failed to parse value as integer",
-					})
-					break
+				logIndex := len(server.log) - 1
+				server.pendingRequests[logIndex] = PendingRequest{
+					ClientID: msg.Src,
+					MsgID:    uint64(body["msg_id"].(float64)),
 				}
-				resp["value"] = intValue
-			}
 
-			if clientMsg != nil {
-				reply(*clientMsg, resp)
-			} else {
-				reply(msg, resp)
+				broadcast(server, appendEntriesRequest, originalMsg)
 			}
 			break
 
