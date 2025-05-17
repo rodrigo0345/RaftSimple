@@ -173,6 +173,23 @@ func NewServer(id string, nodes []string,
 	return s
 }
 
+func (s *Server) printLogs() {
+	fmt.Println("Logs for server", s.id)
+
+	// check if the entry is commited or not
+	for i := 0; i <= s.commitIndex; i++ {
+		if i > len(s.log)-1 {
+			break
+		}
+		entry := s.log[i]
+		if entry.Index == i {
+			fmt.Printf("Index: %d, Term: %d, Command: %s\n", entry.Index, entry.Term, entry.Command)
+		} else {
+			fmt.Printf("Index: %d, Term: %d, Command: %s (not committed)\n", entry.Index, entry.Term, entry.Command)
+		}
+	}
+}
+
 func (s *Server) becomeCandidate(followerToCandidateFunc func(msg map[string]interface{})) {
 	s.currentState = CANDIDATE
 	s.leaderId = ""
@@ -227,6 +244,10 @@ func (s *Server) AppendEntries(msg AppendEntriesRequest) map[string]interface{} 
 	// println("\033[32mNode " + s.id + " is processing append entry\033[0m\n")
 	s.Lock()
 	defer s.Unlock()
+
+	// TODO: tirar, apenas para o relatorio
+	s.printLogs()
+
 	msgToReturn := s.follower.AppendEntries(s, msg)
 	if msgToReturn["reset_timeout"] == 1 {
 		s.resetElectionTimeout()
@@ -257,6 +278,10 @@ func (s *Server) WaitForReplication(followerID string, success bool, followerTer
 	// println("\033[32mNode " + s.id + " is processing wait for replication\033[0m\n")
 	s.Lock()
 	defer s.Unlock()
+
+	// TODO: tirar, apenas para o relatorio
+	s.printLogs()
+
 	return s.leader.WaitForReplication(s, followerID, success, followerTerm)
 }
 
