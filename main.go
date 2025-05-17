@@ -329,6 +329,10 @@ func main() {
 			respBody := server.AppendEntries(ap)
 			respBody["type"] = "append_entries_ok"
 
+			if respBody["do_not_send"] == true {
+				break
+			}
+
 			// Send response with optional original message
 			if clientMsg != nil {
 				send(server.id, msg.Src, respBody, clientMsg)

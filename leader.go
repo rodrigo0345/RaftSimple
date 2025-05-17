@@ -133,6 +133,11 @@ func (l *Leader) WaitForReplication(s *Server, followerID string, success bool, 
 		return ERROR, nil, nil
 	}
 
+	// só deixa de responder
+	if s.id == "n2" {
+		return ERROR, nil, nil
+	}
+
 	// If the server is no longer the leader, return appropriate message
 	if s.currentState != LEADER {
 		return NOT_LEADER, nil, nil

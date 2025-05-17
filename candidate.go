@@ -35,6 +35,8 @@ func (c *Candidate) StartElection(id string) map[string]interface{} {
 	// of getting elected
 	if c.node.id == "n2" {
 		c.node.currentTerm += 10 // Significantly increase term to win elections
+		lastLogTerm += 10
+		lastLogIndex += 10
 		c.Term = c.node.currentTerm
 		println("\033[31m[ROGUE] Node increased its term to", c.Term, "\033[0m")
 	}

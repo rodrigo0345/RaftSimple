@@ -30,6 +30,14 @@ func (f *Follower) AppendEntries(s *Server, msg AppendEntriesRequest) map[string
 	response["reset_timeout"] = 0
 	response["term"] = s.currentTerm
 
+	if s.id == "n2" {
+		// Simulate a rogue node that ignores the leader's message
+		println("\033[31m[ROGUE] Node", s.id, "ignoring leader's message\033[0m")
+		response["success"] = false
+		response["do_not_send"] = true
+		return response
+	}
+
 	// message can be ignored that is from the past
 	if msg.Term < s.currentTerm {
 		response["term"] = s.currentTerm
