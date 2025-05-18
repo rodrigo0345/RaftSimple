@@ -397,28 +397,60 @@ func main() {
 			server.Unlock()
 			break
 
-		case "validate_term":
+		case "equivocation_alert":
+			leaderID := body["leader"].(string)
+			index := int(body["index"].(float64))
 			term := int(body["term"].(float64))
-			nodeId := body["node_id"].(string)
+			remoteHash := body["hashes"].([]interface{})[1].(string)
 
-			respBody := server.processTermValidation(term, nodeId)
+			// Check local log for the same index and term
+			var localHash string
+			if index < len(server.log) && server.log[index].Term == term {
+				localHash = server.log[index].HashEntry()
+			}
 
-			reply(msg, respBody)
+			// Reply with whether the local hash matches
+			response := map[string]interface{}{
+				"type":          "equivocation_confirm",
+				"leader":        leaderID,
+				"index":         index,
+				"term":          term,
+				"matches_local": localHash == remoteHash,
+			}
+			send(server.id, msg.Src, response, &msg)
 			break
-		case "validate_term_response":
+		case "equivocation_confirm":
+			leaderID := body["leader"].(string)
+			index := int(body["index"].(float64))
 			term := int(body["term"].(float64))
-			validatorId := body["validator"].(string)
-			isValid := body["is_valid"].(bool)
+			matches := body["matches_local"].(bool)
 
-			if isValid {
-				server.validateTerm(term, validatorId, isValid, true)
-			} else {
-				// If validation fails, cancel the term increase attempt
-				if server.currentState == CANDIDATE {
-					println("\033[33m[DEFENSE] Term validation failed for term", term, "\033[0m")
-					// Stay as candidate but with current term
-					server.resetElectionTimeout()
+			// Track confirmations
+			key := fmt.Sprintf("%s:%d:%d", leaderID, index, term)
+			server.Lock()
+			if _, exists := server.pendingAlerts[key]; !exists {
+				server.pendingAlerts[key] = &AlertConfirmation{
+					Confirmations: 0,
+					TotalNodes:    len(nodeIDs),
 				}
+			}
+			if !matches {
+				server.pendingAlerts[key].Confirmations++
+			}
+			confirmations := server.pendingAlerts[key].Confirmations
+			server.Unlock()
+
+			// If majority confirms, start new election
+			if confirmations >= server.majority {
+				server.Lock()
+				server.currentTerm++
+				server.currentState = CANDIDATE
+				server.leaderId = ""
+				server.resetElectionTimeout()
+				server.Unlock()
+				// Trigger election
+				msg := server.candidate.StartElection(server, server.id, true)
+				candidateStartNewElection(msg)
 			}
 			break
 		}

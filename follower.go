@@ -91,6 +91,20 @@ func (f *Follower) AppendEntries(s *Server, msg AppendEntriesRequest) map[string
 	}
 	s.log = append(s.log, msg.Entries...)
 
+	for _, entry := range msg.Entries {
+		if entry.Index < len(s.log) {
+			existingEntry := s.log[entry.Index]
+			if existingEntry.Term == entry.Term && existingEntry.HashEntry() != entry.HashEntry() {
+				alert, _ := NewEquivocationAlertIfApplicable(entry, msg.LeaderID, s)
+				if alert != nil {
+					// Broadcast the alert to all nodes
+					alertMsg := alert.ToRPCMessage()
+					broadcast(s, alertMsg, nil)
+				}
+			}
+		}
+	}
+
 	// podemos dar commit a mais mensagens, caso o lider tenha dado commit a mensagens que o follower não deu
 	if msg.LeaderCommit > s.commitIndex {
 		lastNewEntryIndex := msg.PrevLogIndex + len(msg.Entries)

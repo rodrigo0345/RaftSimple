@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"math/rand"
 	"os"
@@ -18,6 +20,15 @@ type LogEntry struct {
 	// usado para retornar uma resposta a quem a mandou
 	Message     *MessageInternal
 	MessageFrom string // last node that sent the message to the leader
+	Signature   string
+}
+
+func (e *LogEntry) HashEntry() string {
+	h := sha256.New()
+	h.Write([]byte(e.Command))
+	h.Write([]byte(string(e.Term)))
+	h.Write([]byte(string(e.Index)))
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // KeyValueStore is the state machine for the Raft system
@@ -71,6 +82,11 @@ type PendingRequest struct {
 	MsgID    uint64
 }
 
+type AlertConfirmation struct {
+	Confirmations int
+	TotalNodes    int
+}
+
 // Server represents a Raft node
 type Server struct {
 	id                  string
@@ -91,6 +107,7 @@ type Server struct {
 	mutex               *sync.Mutex
 	pendingRequests     map[int]PendingRequest // Added to track client requests
 	leaderHeartbeatFunc func(msg map[string]interface{})
+	pendingAlerts       map[string]*AlertConfirmation
 
 	vs *ValidationStore
 }
@@ -133,6 +150,7 @@ func NewServer(id string, nodes []string,
 		mutex:               &sync.Mutex{},
 		pendingRequests:     make(map[int]PendingRequest),
 		leaderHeartbeatFunc: leaderHeartbeatFunc,
+		pendingAlerts:       make(map[string]*AlertConfirmation),
 
 		// anti-byzantine
 		vs: newValidationStore(),
