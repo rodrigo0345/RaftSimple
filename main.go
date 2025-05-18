@@ -51,7 +51,7 @@ func candidateStartNewElection(msg map[string]interface{}) {
 		// println("[" + nodeID + "] Sending new election, expecting " + strconv.Itoa(msg["majority"].(int)) + " votes, has: " + strconv.Itoa(msg["has"].(int)))
 	}
 
-	// msg["type"] = "request_vote"
+	msg["type"] = "request_vote"
 	for _, node := range nodeIDs {
 		if node == nodeID {
 			continue
@@ -140,23 +140,14 @@ func main() {
 					MsgID:    uint64(body["msg_id"].(float64)),
 				}
 
-				// Only broadcast if not the rogue leader
 				broadcast(server, appendEntriesRequest, originalMsg)
 			} else {
 				// Handle immediate errors
-				if body["code"] == nil {
-					reply(*originalMsg, map[string]interface{}{
-						"type": "error",
-						"code": 0,
-						"text": "byzantine leader",
-					})
-				} else {
-					reply(*originalMsg, map[string]interface{}{
-						"type": "error",
-						"code": int(body["code"].(float64)),
-						"text": opResponse,
-					})
-				}
+				reply(*originalMsg, map[string]interface{}{
+					"type": "error",
+					"code": int(body["code"].(float64)),
+					"text": opResponse,
+				})
 			}
 			break
 
@@ -217,7 +208,6 @@ func main() {
 					MsgID:    uint64(body["msg_id"].(float64)),
 				}
 
-				// Only broadcast if not the rogue leader
 				broadcast(server, appendEntriesRequest, originalMsg)
 			}
 			break
@@ -343,14 +333,13 @@ func main() {
 
 			errType, newMsg, confirmedOps := server.WaitForReplication(followerID, success, term)
 			if errType == NOT_LEADER {
-				fmt.Fprintf(os.Stderr, "Node %s is not the leader\n", nodeID)
 				// panic("Message received but no longer leader")
 				// Ignore the message
 				break
 			}
 
 			if errType == RETRY_SEND {
-				println("ERROR ON WAIT REPLICATION, RETRYING")
+				// println("ERROR ON WAIT REPLICATION, RETRYING")
 				send(nodeID, followerID, map[string]interface{}{
 					"type":           "append_entries",
 					"term":           newMsg.Term,
@@ -364,12 +353,11 @@ func main() {
 				// Process confirmed operations
 				for _, op := range confirmedOps {
 					if op.ClientMessage == nil {
-						println("No client message for confirmed operation")
+						// println("No client message for confirmed operation")
 						continue
 					}
 
 					// Send the response to the client
-					println("Sending response to client:", op.ClientMessage.Src)
 					reply(*op.ClientMessage, op.Response)
 					// println("Responded to client with:", op.Response["type"])
 				}
@@ -395,64 +383,6 @@ func main() {
 			voterID := msg.Src
 			server.candidate.HandleVoteResponse(server, voterID, term, voteGranted)
 			server.Unlock()
-			break
-
-		case "equivocation_alert":
-			leaderID := body["leader"].(string)
-			index := int(body["index"].(float64))
-			term := int(body["term"].(float64))
-			remoteHash := body["hashes"].([]interface{})[1].(string)
-
-			// Check local log for the same index and term
-			var localHash string
-			if index < len(server.log) && server.log[index].Term == term {
-				localHash = server.log[index].HashEntry()
-			}
-
-			// Reply with whether the local hash matches
-			response := map[string]interface{}{
-				"type":          "equivocation_confirm",
-				"leader":        leaderID,
-				"index":         index,
-				"term":          term,
-				"matches_local": localHash == remoteHash,
-			}
-			send(server.id, msg.Src, response, &msg)
-			break
-		case "equivocation_confirm":
-			leaderID := body["leader"].(string)
-			index := int(body["index"].(float64))
-			term := int(body["term"].(float64))
-			matches := body["matches_local"].(bool)
-
-			// Track confirmations
-			key := fmt.Sprintf("%s:%d:%d", leaderID, index, term)
-			server.Lock()
-			if _, exists := server.pendingAlerts[key]; !exists {
-				server.pendingAlerts[key] = &AlertConfirmation{
-					Confirmations: 0,
-					TotalNodes:    len(nodeIDs),
-				}
-			}
-			if !matches {
-				server.pendingAlerts[key].Confirmations++
-			}
-			confirmations := server.pendingAlerts[key].Confirmations
-			server.Unlock()
-
-			// If majority confirms, start new election
-			if confirmations >= server.majority {
-				server.Lock()
-				server.currentTerm++
-				server.currentState = CANDIDATE
-				server.leaderId = ""
-				server.resetElectionTimeout()
-				server.Unlock()
-				// Trigger election
-				msg := server.candidate.StartElection(server, server.id, true)
-				candidateStartNewElection(msg)
-			}
-			break
 		}
 	}
 	if err := scanner.Err(); err != nil {

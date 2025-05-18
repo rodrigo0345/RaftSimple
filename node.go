@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math/rand"
-	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -20,10 +19,11 @@ type LogEntry struct {
 	// usado para retornar uma resposta a quem a mandou
 	Message     *MessageInternal
 	MessageFrom string // last node that sent the message to the leader
-	Signature   string
+	Signature   string // signature of the entry
 }
 
 func (e *LogEntry) HashEntry() string {
+	// Implement a hash function for the entry
 	h := sha256.New()
 	h.Write([]byte(e.Command))
 	h.Write([]byte(string(e.Term)))
@@ -82,11 +82,6 @@ type PendingRequest struct {
 	MsgID    uint64
 }
 
-type AlertConfirmation struct {
-	Confirmations int
-	TotalNodes    int
-}
-
 // Server represents a Raft node
 type Server struct {
 	id                  string
@@ -107,9 +102,6 @@ type Server struct {
 	mutex               *sync.Mutex
 	pendingRequests     map[int]PendingRequest // Added to track client requests
 	leaderHeartbeatFunc func(msg map[string]interface{})
-	pendingAlerts       map[string]*AlertConfirmation
-
-	vs *ValidationStore
 }
 
 func (s *Server) Lock() {
@@ -150,10 +142,6 @@ func NewServer(id string, nodes []string,
 		mutex:               &sync.Mutex{},
 		pendingRequests:     make(map[int]PendingRequest),
 		leaderHeartbeatFunc: leaderHeartbeatFunc,
-		pendingAlerts:       make(map[string]*AlertConfirmation),
-
-		// anti-byzantine
-		vs: newValidationStore(),
 	}
 	s.candidate = NewCandidate(s) // Pass server instance to Candidate
 
@@ -163,19 +151,16 @@ func NewServer(id string, nodes []string,
 	go func() {
 		for {
 			<-s.timer.C
-			fmt.Fprintf(os.Stderr, "\033[33mNode %s: Timer expired, current state: %d\033[0m\n", s.id, s.currentState)
 			s.Lock()
 			switch s.currentState {
 			case FOLLOWER:
 				// println("\\033[31mTIMER GOT RESETED, NO LEADER CONTACTED\\033[0m")
-				msg := s.candidate.StartElection(s, s.id, true)
-				candidateStartNewElection(msg)
-				// s.becomeCandidate(candidateStartNewElection)
+				s.becomeCandidate(candidateStartNewElection)
 				s.resetElectionTimeout()
 				s.Unlock()
 				break
 			case CANDIDATE:
-				msg := s.candidate.StartElection(s, s.id, true)
+				msg := s.candidate.StartElection(s.id)
 				candidateStartNewElection(msg)
 				s.resetElectionTimeout()
 				s.Unlock()
@@ -200,88 +185,10 @@ func NewServer(id string, nodes []string,
 	return s
 }
 
-/////////////////////////////////
-// solução anti-term forgery
-/////////////////////////////////
-
-func (s *Server) validateTerm(term int, validatorId string, isValid bool, implicitSend bool) bool {
-	s.Lock()
-	defer s.Unlock()
-
-	// se neste ponto já tem maioria, é sinal que já enviou o request_vote
-	// esta variavel é para evitar que o leader envie duplicados
-	stop := s.vs.hasMajorityAccepted(s, CurrentTerm(s.currentTerm+1))
-
-	// First time seeing this term
-	s.vs.addValidationProposer(validatorId, CurrentTerm(s.currentTerm+1), term, isValid)
-
-	if !stop && s.vs.hasMajorityAccepted(s, CurrentTerm(s.currentTerm+1)) {
-		// Launch election broadcast
-		if implicitSend {
-			// only set currentTerm when a majority is reached
-			s.currentTerm = term
-			s.votedFor = ""
-			msg := s.candidate.StartElection(s, s.id, false)
-			followerToCandidateFunc := candidateStartNewElection // reuse callback
-			msg["type"] = "request_vote"
-			followerToCandidateFunc(msg)
-		}
-		return true
-	}
-
-	if stop {
-		return false
-	}
-
-	receivedMajorityTerm := s.vs.hasMajorityRefused(s, CurrentTerm(s.currentTerm+1))
-	if receivedMajorityTerm > -1 {
-		println("\033[31m[ROGUE] Node", s.id, "received majority of refusals for term", term, "\033[0m")
-		s.currentTerm = receivedMajorityTerm
-		s.votedFor = ""
-		s.currentState = FOLLOWER
-		s.leaderId = ""
-		s.resetElectionTimeout()
-		return true
-	}
-
-	return false
-}
-
-func (s *Server) requestTermValidation(term int) map[string]interface{} {
-	// vote on self
-	s.vs.voteForSelf(s.id, CurrentTerm(term))
-
-	return map[string]interface{}{
-		"type":    "validate_term",
-		"term":    term,
-		"node_id": s.id,
-	}
-}
-
-func (s *Server) processTermValidation(term int, nodeId string) map[string]interface{} {
-	s.Lock()
-	defer s.Unlock()
-
-	isValid := s.vs.addValidationFollower(nodeId, CurrentTerm(s.currentTerm), term)
-	return map[string]interface{}{
-		"type":      "validate_term_response",
-		"term":      term,
-		"validator": s.id,
-		"is_valid":  isValid,
-	}
-}
-
-/////////////////////////////////
-// solução anti-term forgery
-/////////////////////////////////
-
 func (s *Server) becomeCandidate(followerToCandidateFunc func(msg map[string]interface{})) {
 	s.currentState = CANDIDATE
 	s.leaderId = ""
-	s.currentTerm += 1
-
-	// nesta versão alterada, envia apenas um request_validate para validar o termo
-	msg := s.candidate.StartElection(s, s.id, true)
+	msg := s.candidate.StartElection(s.id)
 	msg["majority"] = s.majority
 	msg["has"] = len(s.candidate.Votes)
 	followerToCandidateFunc(msg)
@@ -291,17 +198,13 @@ func (s *Server) becomeCandidate(followerToCandidateFunc func(msg map[string]int
 func (s *Server) resetElectionTimeout() {
 	minTimeout := 150
 	maxTimeout := 300
-	if s.id == "n2" { // Rogue node
-		minTimeout = 50
-		maxTimeout = 100
-	}
 	timeout := minTimeout + rand.Intn(maxTimeout-minTimeout)
 	// println("RESETTING ELECTION TIMEOUT TO", timeout, "ms")
 	s.timer.Reset(time.Millisecond * time.Duration(timeout))
 }
 
 func (s *Server) resetLeaderTimeout() {
-	value := 20
+	value := 100
 	// println("RESETTING LEADER TIMEOUT TO", value, "ms")
 	s.timer.Reset(time.Millisecond * time.Duration(value))
 }
@@ -334,11 +237,8 @@ type AppendEntriesRequest struct {
 // AppendEntries handles log replication from the leader
 func (s *Server) AppendEntries(msg AppendEntriesRequest) map[string]interface{} {
 	// println("\033[32mNode " + s.id + " is processing append entry\033[0m\n")
-	s.PrintLogs()
-
 	s.Lock()
 	defer s.Unlock()
-
 	msgToReturn := s.follower.AppendEntries(s, msg)
 	if msgToReturn["reset_timeout"] == 1 {
 		s.resetElectionTimeout()
@@ -346,29 +246,12 @@ func (s *Server) AppendEntries(msg AppendEntriesRequest) map[string]interface{} 
 	return msgToReturn
 }
 
-func (s *Server) PrintLogs() {
-	s.Lock()
-	defer s.Unlock()
-
-	println("")
-	println("[State machine]")
-
-	// print if it is commited or not
-	for i, entry := range s.log {
-		if i <= s.commitIndex {
-			println("[COMMITTED] " + entry.Command)
-		} else {
-			println("[NOT COMMITTED] " + entry.Command)
-		}
-	}
-}
-
 // WaitForReplication processes follower responses for replication
 
 const (
 	CAS                 = "CAS"
-	WRITE               = "WRITE"
 	READ                = "READ"
+	WRITE               = "WRITE"
 	CAS_INVALID_KEY     = "INVALID_KEY"
 	CAS_INVALID_FROM    = "INVALID_FROM"
 	INVALID_REPLICATION = "INVALID_REPLICATION"
@@ -384,8 +267,6 @@ type ConfirmedOperation struct {
 
 func (s *Server) WaitForReplication(followerID string, success bool, followerTerm int) (MessageType, *AppendEntriesRequest, []ConfirmedOperation) {
 	// println("\033[32mNode " + s.id + " is processing wait for replication\033[0m\n")
-	// s.PrintLogs()
-
 	s.Lock()
 	defer s.Unlock()
 	return s.leader.WaitForReplication(s, followerID, success, followerTerm)
@@ -396,14 +277,11 @@ func (s *Server) Write(key string, value string, originalMessage *MessageInterna
 	s.Lock()
 	defer s.Unlock()
 	if s.currentState != LEADER {
-		println("NOT LEADER")
 		return NOT_LEADER, nil, s.leaderId
 	}
-	println("Processing write")
 	return s.leader.Write(s, key, value, originalMessage, msgFrom)
 }
 
-// Read retrieves a value from the key-value store
 func (s *Server) Read(key string, originalMessage *MessageInternal, msgFrom string) (MessageType, *AppendEntriesRequest, string) {
 	// println("\033[32mNode " + s.id + " is processing a read\033[0m\n")
 	s.Lock()
@@ -419,9 +297,7 @@ func (s *Server) Cas(key string, from string, to string, originalMessage *Messag
 	s.Lock()
 	defer s.Unlock()
 	if s.currentState != LEADER {
-		println("NOT LEADER")
 		return NOT_LEADER, nil, s.leaderId
 	}
-	println("Processing CAS")
 	return s.leader.Cas(s, key, from, to, originalMessage, msgFrom)
 }

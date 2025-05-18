@@ -30,13 +30,6 @@ func (f *Follower) AppendEntries(s *Server, msg AppendEntriesRequest) map[string
 	response["reset_timeout"] = 0
 	response["term"] = s.currentTerm
 
-	if !s.vs.isProposerTermValid(msg.LeaderID, CurrentTerm(s.currentTerm-1), msg.Term) {
-		response["term"] = s.currentTerm
-		response["success"] = false
-		println("\033[33m[DEFENSE] Node", s.id, "rejected suspicious AppendEntries term", msg.Term, "from", msg.LeaderID, "\033[0m")
-		return response
-	}
-
 	// message can be ignored that is from the past
 	if msg.Term < s.currentTerm {
 		println("\033[33m[DEFENSE] Node", s.id, "rejected AppendEntries term", msg.Term, "from", msg.LeaderID, "\033[0m")
@@ -146,14 +139,6 @@ func (f *Follower) Vote(s *Server, msg RequestVoteRequest) map[string]interface{
 	if msg.Term < s.currentTerm {
 		response["term"] = s.currentTerm
 		response["vote_granted"] = false
-		return response
-	}
-
-	// suspeita de alteração indevida de termos
-	if !s.vs.isProposerTermValid(msg.CandidateID, CurrentTerm(s.currentTerm), msg.Term) {
-		response["term"] = s.currentTerm
-		response["vote_granted"] = false
-		println("\033[33m[DEFENSE] Node", s.id, "rejected suspicious vote term", msg.Term, "from", msg.CandidateID, "\033[0m")
 		return response
 	}
 

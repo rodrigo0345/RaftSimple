@@ -132,12 +132,6 @@ func (l *Leader) WaitForReplication(s *Server, followerID string, success bool, 
 	}
 	println("Server is leader, proceeding with replication check")
 
-	if s.currentTerm != term && !s.vs.isFollowerTermValid(followerID, CurrentTerm(s.currentTerm), term) {
-		println("Term mismatch or invalid term from follower:", followerID, "leader term:", s.currentTerm, "follower term:", term)
-		return ERROR, nil, nil
-	}
-	println("Term is valid or matches, continuing")
-
 	if term > s.currentTerm {
 		println("Higher term detected from follower:", followerID, "new term:", term, "old term:", s.currentTerm)
 		s.currentTerm = term
