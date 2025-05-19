@@ -1,5 +1,7 @@
 package main
 
+import "sort"
+
 // this file is a helper to be able to the
 // leader to change commited entries
 type Attack struct {
@@ -28,12 +30,29 @@ func NewAttack() *Attack {
 // set prevLogTerm and prevLogIndex to the last entry before the
 // changed entry
 func (a *Attack) Attack(s *Server, prevLogTerm, prevLogIndex int, newListOfEntries []LogEntry) {
+	if a.alreadyAttacked {
+		return
+	}
 	a.prevLogTerm = prevLogTerm
 	a.prevLogIndex = prevLogIndex
 	a.previousListOfEntries = s.log
 	a.newListOfEntries = newListOfEntries
 	a.isDisabled = false
-	s.log = append(s.log[:prevLogIndex], newListOfEntries...)
+	a.alreadyAttacked = true
+
+	s.log[prevLogIndex+1].Command = "write 0 999"
+	s.log = append(s.log[:prevLogIndex+1], newListOfEntries...)
+
+	// use quick sort to sort the log
+	sort.Slice(s.log, func(i, j int) bool {
+		return s.log[i].Index < s.log[j].Index
+	})
+
+	println(" ")
+	println("Attack applied")
+	println(s.ToStringLogs())
+	println(" ")
+
 }
 
 func (a *Attack) GenerateAppendEntriesRequest(s *Server, originalMsg AppendEntriesRequest) AppendEntriesRequest {
@@ -44,7 +63,6 @@ func (a *Attack) GenerateAppendEntriesRequest(s *Server, originalMsg AppendEntri
 
 	// disable after the attack
 	a.isDisabled = true
-	a.alreadyAttacked = true
 	return AppendEntriesRequest{
 		IsAttack:     true,
 		Term:         s.currentTerm,

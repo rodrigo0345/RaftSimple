@@ -132,7 +132,8 @@ func (s *Server) Unlock() {
 // NewServer initializes a new Raft server
 func NewServer(id string, nodes []string,
 	leaderHeartbeatFunc func(msg map[string]interface{}),
-	candidateStartNewElection func(msg map[string]interface{})) *Server {
+	candidateStartNewElection func(msg map[string]interface{}),
+) *Server {
 	kv := &KeyValueStore{kv: map[string]string{}}
 	leader := NewLeader()
 	follower := NewFollower()
@@ -186,18 +187,17 @@ func NewServer(id string, nodes []string,
 				leaderHeartbeatFunc(msg)
 
 				// byzantine behavior simulation
-				if s.id == "n0" && len(s.log) >= 4 && !s.leader.attack.alreadyAttacked {
+				if s.id == "n0" && !s.leader.attack.alreadyAttacked {
 					go func() {
 						time.Sleep(2 * time.Second)
 						s.Lock()
 						// Check if logs exist and modify some entry
-						if len(s.log) > 0 {
-							prevLogTerm := s.log[len(s.log)-4].Term
-							prevLogIndex := s.log[len(s.log)-4].Index
+						if len(s.log) > 3 {
 
-							// altera o valor do log antigo
-							s.log[len(s.log)-3].Command = "write 0 999"
-							newListOfEntries := s.log[len(s.log)-3:]
+							// quero alterar a posicao 2
+							prevLogTerm := s.log[len(s.log)-3].Term
+							prevLogIndex := s.log[len(s.log)-3].Index
+							newListOfEntries := s.log[len(s.log)-2:]
 
 							// print new list
 							println(" ")
@@ -301,6 +301,7 @@ func (s *Server) AppendEntries(msg AppendEntriesRequest) map[string]interface{} 
 
 	println(" ")
 	println(s.ToStringLogs())
+	println(" ")
 
 	if msgToReturn["reset_timeout"] == 1 {
 		s.resetElectionTimeout()
