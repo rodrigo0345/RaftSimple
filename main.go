@@ -124,6 +124,7 @@ func main() {
 			if msgType == CAS_OK {
 				// The operation is valid, need to replicate
 				appendEntriesRequest := map[string]interface{}{
+					"attack":         appendReq.IsAttack,
 					"term":           appendReq.Term,
 					"entries":        appendReq.Entries,
 					"leader_id":      appendReq.LeaderID,
@@ -193,6 +194,7 @@ func main() {
 
 			if msgType == WRITE_OK {
 				appendEntriesRequest := map[string]interface{}{
+					"attack":         appendReq.IsAttack,
 					"term":           appendReq.Term,
 					"entries":        appendReq.Entries,
 					"leader_id":      appendReq.LeaderID,
@@ -250,6 +252,7 @@ func main() {
 
 			if msgType == READ_OK {
 				appendEntriesRequest := map[string]interface{}{
+					"attack":         appendReq.IsAttack,
 					"term":           appendReq.Term,
 					"entries":        appendReq.Entries,
 					"leader_id":      appendReq.LeaderID,
@@ -383,6 +386,60 @@ func main() {
 			voterID := msg.Src
 			server.candidate.HandleVoteResponse(server, voterID, term, voteGranted)
 			server.Unlock()
+
+		case "equivocation_alert":
+			leaderID := body["leader"].(string)
+			index := int(body["index"].(float64))
+			term := int(body["term"].(float64))
+			remoteHash := body["hashes"].([]interface{})[1].(string)
+
+			// Check local log for the same index and term
+			var localHash string
+			if index < len(server.log) && server.log[index].Term == term {
+				localHash = server.log[index].HashEntry()
+			}
+
+			// Reply with whether the local hash matches
+			response := map[string]interface{}{
+				"type":          "equivocation_confirm",
+				"leader":        leaderID,
+				"index":         index,
+				"term":          term,
+				"matches_local": localHash == remoteHash,
+			}
+			send(server.id, msg.Src, response, &msg)
+			break
+
+		case "equivocation_confirm":
+			leaderID := body["leader"].(string)
+			index := int(body["index"].(float64))
+			term := int(body["term"].(float64))
+			matches := body["matches_local"].(bool)
+
+			// Track confirmations
+			key := fmt.Sprintf("%s:%d:%d", leaderID, index, term)
+			server.Lock()
+			if _, exists := server.pendingAlerts[key]; !exists {
+				server.pendingAlerts[key] = &AlertConfirmation{
+					Confirmations: 0,
+					TotalNodes:    len(nodeIDs),
+				}
+			}
+			if !matches {
+				server.pendingAlerts[key].Confirmations++
+			}
+			confirmations := server.pendingAlerts[key].Confirmations
+			server.Unlock()
+
+			// If majority confirms, start new election
+			if confirmations >= server.majority {
+				server.Lock()
+				// Trigger election
+				msg := server.candidate.StartElection(server.id)
+				server.Unlock()
+				candidateStartNewElection(msg)
+			}
+			break
 		}
 	}
 	if err := scanner.Err(); err != nil {

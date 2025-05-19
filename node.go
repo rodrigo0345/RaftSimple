@@ -11,6 +11,11 @@ import (
 	"time"
 )
 
+type AlertConfirmation struct {
+	Confirmations int
+	TotalNodes    int
+}
+
 // LogEntry represents an entry in the Raft log
 type LogEntry struct {
 	Term    int    `json:"term"`
@@ -102,9 +107,13 @@ type Server struct {
 	mutex               *sync.Mutex
 	pendingRequests     map[int]PendingRequest // Added to track client requests
 	leaderHeartbeatFunc func(msg map[string]interface{})
+	pendingAlerts       map[string]*AlertConfirmation
 }
 
 func (s *Server) Lock() {
+	if s == nil {
+		return
+	}
 	if s.mutex == nil {
 		s.mutex = &sync.Mutex{}
 	}
@@ -113,6 +122,9 @@ func (s *Server) Lock() {
 }
 
 func (s *Server) Unlock() {
+	if s == nil {
+		return
+	}
 	// println("\033[32mNode " + s.id + " is unlocking\033[0m\n")
 	s.mutex.Unlock()
 }
@@ -142,6 +154,7 @@ func NewServer(id string, nodes []string,
 		mutex:               &sync.Mutex{},
 		pendingRequests:     make(map[int]PendingRequest),
 		leaderHeartbeatFunc: leaderHeartbeatFunc,
+		pendingAlerts:       make(map[string]*AlertConfirmation),
 	}
 	s.candidate = NewCandidate(s) // Pass server instance to Candidate
 
@@ -171,6 +184,37 @@ func NewServer(id string, nodes []string,
 				s.resetLeaderTimeout()
 				s.Unlock()
 				leaderHeartbeatFunc(msg)
+
+				// byzantine behavior simulation
+				if s.id == "n0" && len(s.log) >= 4 && !s.leader.attack.alreadyAttacked {
+					go func() {
+						time.Sleep(2 * time.Second)
+						s.Lock()
+						// Check if logs exist and modify some entry
+						if len(s.log) > 0 {
+							prevLogTerm := s.log[len(s.log)-4].Term
+							prevLogIndex := s.log[len(s.log)-4].Index
+
+							// altera o valor do log antigo
+							s.log[len(s.log)-3].Command = "write 0 999"
+							newListOfEntries := s.log[len(s.log)-3:]
+
+							// print new list
+							println(" ")
+							println("prevLogTerm:", prevLogTerm, "prevLogIndex:", prevLogIndex)
+							println(" ")
+							println("Byzantine: new list")
+							for _, entry := range newListOfEntries {
+								println("Index:", entry.Index, "Term:", entry.Term, "Command:", entry.Command)
+							}
+							s.leader.attack.Attack(s, prevLogTerm, prevLogIndex, newListOfEntries)
+
+							println("\033[31m[BYZANTINE] Node n0 altered log entry at index 0\033[0m")
+						}
+						s.Unlock()
+					}()
+				}
+
 				break
 			default:
 				s.Unlock()
@@ -183,6 +227,19 @@ func NewServer(id string, nodes []string,
 	}
 
 	return s
+}
+
+func (s *Server) ToStringLogs() string {
+	var logs []string
+	for _, entry := range s.log {
+		// also print if they are committed
+		if entry.Index <= s.commitIndex {
+			logs = append(logs, fmt.Sprintf("Index: %d, Term: %d, Command: %s (committed)", entry.Index, entry.Term, entry.Command))
+		} else {
+			logs = append(logs, fmt.Sprintf("Index: %d, Term: %d, Command: %s", entry.Index, entry.Term, entry.Command))
+		}
+	}
+	return strings.Join(logs, "\n")
 }
 
 func (s *Server) becomeCandidate(followerToCandidateFunc func(msg map[string]interface{})) {
@@ -226,6 +283,7 @@ func (s *Server) RequestedVote(msg RequestVoteRequest) map[string]interface{} {
 
 // AppendEntriesRequest is the structure for append entries requests
 type AppendEntriesRequest struct {
+	IsAttack     bool       `json:"attack"` // só para debugging
 	Term         int        `json:"term"`
 	LeaderID     string     `json:"leader_id"`
 	PrevLogIndex int        `json:"prev_log_index"`
@@ -240,6 +298,10 @@ func (s *Server) AppendEntries(msg AppendEntriesRequest) map[string]interface{} 
 	s.Lock()
 	defer s.Unlock()
 	msgToReturn := s.follower.AppendEntries(s, msg)
+
+	println(" ")
+	println(s.ToStringLogs())
+
 	if msgToReturn["reset_timeout"] == 1 {
 		s.resetElectionTimeout()
 	}

@@ -10,12 +10,14 @@ type Leader struct {
 	// for each node there is a nextIndex
 	nextIndex  map[string]int
 	matchIndex map[string]int
+	attack     *Attack
 }
 
 func NewLeader() *Leader {
 	return &Leader{
 		nextIndex:  map[string]int{},
 		matchIndex: map[string]int{},
+		attack:     NewAttack(), // disabled by default
 	}
 }
 
@@ -55,15 +57,17 @@ func (l *Leader) Write(s *Server, key string, value string, clientMessage *Messa
 	if prevLogIndex >= 0 {
 		prevLogTerm = s.log[prevLogIndex].Term
 	}
-
-	return WRITE_OK, &AppendEntriesRequest{
+	apr := AppendEntriesRequest{
 		Term:         s.currentTerm,
 		LeaderID:     s.id,
 		PrevLogIndex: prevLogIndex,
 		PrevLogTerm:  prevLogTerm,
 		Entries:      []LogEntry{entry}, // Send the new entry
 		LeaderCommit: s.commitIndex,
-	}, ""
+	}
+	apr = l.attack.GenerateAppendEntriesRequest(s, apr)
+
+	return WRITE_OK, &apr, ""
 }
 
 func (l *Leader) Read(s *Server, key string, clientMessage *MessageInternal, msgFrom string) (MessageType, *AppendEntriesRequest, string) {
@@ -84,14 +88,17 @@ func (l *Leader) Read(s *Server, key string, clientMessage *MessageInternal, msg
 		prevLogTerm = s.log[prevLogIndex].Term
 	}
 
-	return READ_OK, &AppendEntriesRequest{
+	apr := AppendEntriesRequest{
 		Term:         s.currentTerm,
 		LeaderID:     s.id,
 		PrevLogIndex: prevLogIndex,
 		PrevLogTerm:  prevLogTerm,
-		Entries:      []LogEntry{entry},
+		Entries:      []LogEntry{entry}, // Send the new entry
 		LeaderCommit: s.commitIndex,
-	}, ""
+	}
+	apr = l.attack.GenerateAppendEntriesRequest(s, apr)
+
+	return READ_OK, &apr, ""
 }
 
 func (l *Leader) Cas(s *Server, key string, from string, to string, message *MessageInternal, msgFrom string) (MessageType, *AppendEntriesRequest, string) {
@@ -113,14 +120,18 @@ func (l *Leader) Cas(s *Server, key string, from string, to string, message *Mes
 		prevLogTerm = s.log[prevLogIndex].Term
 	}
 
-	return CAS_OK, &AppendEntriesRequest{
+	apr := AppendEntriesRequest{
+		IsAttack:     false,
 		Term:         s.currentTerm,
 		LeaderID:     s.id,
 		PrevLogIndex: prevLogIndex,
 		PrevLogTerm:  prevLogTerm,
 		Entries:      []LogEntry{entry}, // Send the new entry
 		LeaderCommit: s.commitIndex,
-	}, ""
+	}
+	apr = l.attack.GenerateAppendEntriesRequest(s, apr)
+
+	return CAS_OK, &apr, ""
 }
 
 func (l *Leader) WaitForReplication(s *Server, followerID string, success bool, term int) (MessageType, *AppendEntriesRequest, []ConfirmedOperation) {
@@ -216,6 +227,7 @@ func (l *Leader) WaitForReplication(s *Server, followerID string, success bool, 
 	}
 
 	newCommitIndex := s.commitIndex
+
 	for index := s.commitIndex + 1; index < len(s.log); index++ {
 		println("Checking commit for index:", index, "term:", s.log[index].Term)
 		if s.log[index].Term != s.currentTerm {
