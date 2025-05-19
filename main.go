@@ -19,12 +19,7 @@ func followerToCandidate(msg map[string]interface{}) {
 		// println("[" + nodeID + "] Sending follower to candidate, expecting " + strconv.Itoa(server.majority) + " votes, has: " + strconv.Itoa(len(server.candidate.Votes)))
 	}
 	msg["type"] = "request_vote"
-	for _, node := range nodeIDs {
-		if node == nodeID {
-			continue
-		}
-		send(nodeID, node, msg, nil)
-	}
+	broadcast(server, msg, nil)
 }
 
 func leaderHeartbeat(msg map[string]interface{}) {
@@ -35,12 +30,7 @@ func leaderHeartbeat(msg map[string]interface{}) {
 	}
 
 	msg["type"] = "append_entries"
-	for _, node := range nodeIDs {
-		if node == nodeID {
-			continue
-		}
-		send(nodeID, node, msg, nil)
-	}
+	broadcast(server, msg, nil)
 	// println("ENDED BROADCAST HEARTBEAT")
 }
 
@@ -52,13 +42,7 @@ func candidateStartNewElection(msg map[string]interface{}) {
 	}
 
 	msg["type"] = "request_vote"
-	for _, node := range nodeIDs {
-		if node == nodeID {
-			continue
-		}
-		send(nodeID, node, msg, nil)
-	}
-	// println("ENDED BROADCAST")
+	broadcast(server, msg, nil)
 }
 
 func main() {
@@ -321,6 +305,11 @@ func main() {
 			respBody := server.AppendEntries(ap)
 			respBody["type"] = "append_entries_ok"
 
+			if respBody["wait"] != nil {
+				// wait for the equivocation confirmation
+				break
+			}
+
 			// Send response with optional original message
 			if clientMsg != nil {
 				send(server.id, msg.Src, respBody, clientMsg)
@@ -391,12 +380,12 @@ func main() {
 			leaderID := body["leader"].(string)
 			index := int(body["index"].(float64))
 			term := int(body["term"].(float64))
-			remoteHash := body["hashes"].([]interface{})[1].(string)
+			remoteCommand := body["command"].(string)
 
 			// Check local log for the same index and term
-			var localHash string
+			var localCommand string
 			if index < len(server.log) && server.log[index].Term == term {
-				localHash = server.log[index].HashEntry()
+				localCommand = server.log[index].Command
 			}
 
 			// Reply with whether the local hash matches
@@ -405,7 +394,7 @@ func main() {
 				"leader":        leaderID,
 				"index":         index,
 				"term":          term,
-				"matches_local": localHash == remoteHash,
+				"matches_local": localCommand == remoteCommand,
 			}
 			send(server.id, msg.Src, response, &msg)
 			break
@@ -416,29 +405,90 @@ func main() {
 			term := int(body["term"].(float64))
 			matches := body["matches_local"].(bool)
 
-			// Track confirmations
+			// Generate key for tracking
 			key := fmt.Sprintf("%s:%d:%d", leaderID, index, term)
 			server.Lock()
+
+			// Initialize alert tracking if not exists (should be set when alert is sent)
 			if _, exists := server.pendingAlerts[key]; !exists {
 				server.pendingAlerts[key] = &AlertConfirmation{
-					Confirmations: 0,
-					TotalNodes:    len(nodeIDs),
+					AgainstLeader: 1, // Alert sender disagrees
+					SupportLeader: 0,
 				}
 			}
-			if !matches {
-				server.pendingAlerts[key].Confirmations++
-			}
-			confirmations := server.pendingAlerts[key].Confirmations
-			server.Unlock()
 
-			// If majority confirms, start new election
-			if confirmations >= server.majority {
-				server.Lock()
-				// Trigger election
-				msg := server.candidate.StartElection(server.id)
-				server.Unlock()
-				candidateStartNewElection(msg)
+			// Update counts based on response
+			if matches {
+				server.pendingAlerts[key].SupportLeader++
+			} else {
+				server.pendingAlerts[key].AgainstLeader++
 			}
+
+			alert := server.pendingAlerts[key]
+
+			if alert.SupportLeader >= server.majority {
+				// Majority supports leader's entry, accept pending append_entries
+				if pendingMsg, ok := server.pendingAppendEntries[key]; ok {
+					// Apply the pending entries
+					startIndex := pendingMsg.PrevLogIndex + 1
+					for i, entry := range pendingMsg.Entries {
+						idx := startIndex + i
+						if idx < len(server.log) {
+							server.log[idx] = entry
+						} else {
+							server.log = append(server.log, entry)
+						}
+					}
+
+					// Update commitIndex
+					if pendingMsg.LeaderCommit > server.commitIndex {
+						server.commitIndex = min(pendingMsg.LeaderCommit, len(server.log)-1)
+					}
+
+					// Apply to state machine
+					for i := server.lastApplied + 1; i <= server.commitIndex; i++ {
+						entry := server.log[i]
+						parts := strings.Split(entry.Command, " ")
+						if parts[0] == "write" && len(parts) == 3 {
+							server.stateMachine.kv[parts[1]] = parts[2]
+						} else if parts[0] == "cas" && len(parts) == 4 {
+							key := parts[1]
+							from := parts[2]
+							to := parts[3]
+							currentValue, exists := server.stateMachine.kv[key]
+							if exists && currentValue == from {
+								server.stateMachine.kv[key] = to
+							}
+						}
+						server.lastApplied = i
+					}
+
+					// Send append_entries_ok with success=true
+					response := map[string]interface{}{
+						"type":    "append_entries_ok",
+						"term":    server.currentTerm,
+						"success": true,
+					}
+					send(server.id, pendingMsg.LeaderID, response, nil)
+
+					// Clean up
+					delete(server.pendingAppendEntries, key)
+					delete(server.pendingAlerts, key)
+				}
+			} else if alert.AgainstLeader >= server.majority {
+				// Majority detects discrepancy, trigger election
+				server.follower.equivocationDB.BanLeader(leaderID)
+
+				// ban leader
+				electionMsg := server.candidate.StartElection(server.id)
+				server.Unlock()
+				candidateStartNewElection(electionMsg)
+				// Clean up
+				server.Lock()
+				delete(server.pendingAppendEntries, key)
+				delete(server.pendingAlerts, key)
+			}
+			server.Unlock()
 			break
 		}
 	}
@@ -459,6 +509,9 @@ func processEntries(entriesRaw interface{}) []LogEntry {
 func broadcast(server *Server, msg map[string]interface{}, originalMessage *MessageInternal) {
 	for _, node := range server.nodes {
 		if node == server.id {
+			continue
+		} else if server.follower.equivocationDB.IsLeaderBanned(node) {
+			// evitar que o resto dos nós entrem em contacto com o líder bizantino
 			continue
 		}
 		send(server.id, node, msg, originalMessage)

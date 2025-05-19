@@ -12,8 +12,8 @@ import (
 )
 
 type AlertConfirmation struct {
-	Confirmations int
-	TotalNodes    int
+	AgainstLeader int
+	SupportLeader int
 }
 
 // LogEntry represents an entry in the Raft log
@@ -89,25 +89,26 @@ type PendingRequest struct {
 
 // Server represents a Raft node
 type Server struct {
-	id                  string
-	nodes               []string
-	commitIndex         int
-	lastApplied         int
-	currentTerm         int
-	votedFor            string
-	majority            int
-	log                 []LogEntry
-	currentState        State
-	leader              *Leader
-	candidate           *Candidate
-	follower            *Follower
-	stateMachine        *KeyValueStore
-	leaderId            string
-	timer               *time.Timer
-	mutex               *sync.Mutex
-	pendingRequests     map[int]PendingRequest // Added to track client requests
-	leaderHeartbeatFunc func(msg map[string]interface{})
-	pendingAlerts       map[string]*AlertConfirmation
+	id                   string
+	nodes                []string
+	commitIndex          int
+	lastApplied          int
+	currentTerm          int
+	votedFor             string
+	majority             int
+	log                  []LogEntry
+	currentState         State
+	leader               *Leader
+	candidate            *Candidate
+	follower             *Follower
+	stateMachine         *KeyValueStore
+	leaderId             string
+	timer                *time.Timer
+	mutex                *sync.Mutex
+	pendingRequests      map[int]PendingRequest // Added to track client requests
+	leaderHeartbeatFunc  func(msg map[string]interface{})
+	pendingAlerts        map[string]*AlertConfirmation
+	pendingAppendEntries map[string]AppendEntriesRequest
 }
 
 func (s *Server) Lock() {
@@ -136,26 +137,27 @@ func NewServer(id string, nodes []string,
 ) *Server {
 	kv := &KeyValueStore{kv: map[string]string{}}
 	leader := NewLeader()
-	follower := NewFollower()
+	follower := NewFollower(nodes)
 	s := &Server{
-		id:                  id,
-		nodes:               nodes,
-		commitIndex:         -1,
-		lastApplied:         -1,
-		currentTerm:         0,
-		votedFor:            "",
-		majority:            len(nodes)/2 + 1,
-		log:                 []LogEntry{},
-		currentState:        FOLLOWER,
-		leader:              leader,
-		follower:            follower,
-		stateMachine:        kv,
-		leaderId:            "",
-		timer:               time.NewTimer(time.Millisecond * time.Duration(rand.Intn(150)+150)),
-		mutex:               &sync.Mutex{},
-		pendingRequests:     make(map[int]PendingRequest),
-		leaderHeartbeatFunc: leaderHeartbeatFunc,
-		pendingAlerts:       make(map[string]*AlertConfirmation),
+		id:                   id,
+		nodes:                nodes,
+		commitIndex:          -1,
+		lastApplied:          -1,
+		currentTerm:          0,
+		votedFor:             "",
+		majority:             len(nodes)/2 + 1,
+		log:                  []LogEntry{},
+		currentState:         FOLLOWER,
+		leader:               leader,
+		follower:             follower,
+		stateMachine:         kv,
+		leaderId:             "",
+		timer:                time.NewTimer(time.Millisecond * time.Duration(rand.Intn(150)+150)),
+		mutex:                &sync.Mutex{},
+		pendingRequests:      make(map[int]PendingRequest),
+		leaderHeartbeatFunc:  leaderHeartbeatFunc,
+		pendingAlerts:        make(map[string]*AlertConfirmation),
+		pendingAppendEntries: make(map[string]AppendEntriesRequest),
 	}
 	s.candidate = NewCandidate(s) // Pass server instance to Candidate
 
@@ -261,7 +263,7 @@ func (s *Server) resetElectionTimeout() {
 }
 
 func (s *Server) resetLeaderTimeout() {
-	value := 100
+	value := 30
 	// println("RESETTING LEADER TIMEOUT TO", value, "ms")
 	s.timer.Reset(time.Millisecond * time.Duration(value))
 }

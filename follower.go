@@ -1,16 +1,21 @@
 package main
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 type Follower struct {
-	nextIndex  map[int]int
-	matchIndex map[int]int
+	nextIndex      map[int]int
+	matchIndex     map[int]int
+	equivocationDB *EquivocationDB
 }
 
-func NewFollower() *Follower {
+func NewFollower(nodes []string) *Follower {
 	return &Follower{
-		nextIndex:  map[int]int{},
-		matchIndex: map[int]int{},
+		nextIndex:      map[int]int{},
+		matchIndex:     map[int]int{},
+		equivocationDB: NewEquivocationDB(nodes),
 	}
 }
 
@@ -30,7 +35,14 @@ func (f *Follower) AppendEntries(s *Server, msg AppendEntriesRequest) map[string
 	response["reset_timeout"] = 0
 	response["term"] = s.currentTerm
 
-	// message can be ignored that is from the past
+	// Check if leader is banned
+	if f.equivocationDB != nil && f.equivocationDB.IsLeaderBanned(msg.LeaderID) {
+		println("\033[33m[DEFENSE] Node", s.id, "rejected AppendEntries from banned leader", msg.LeaderID, "\033[0m")
+		response["success"] = false
+		return response
+	}
+
+	// Reject messages from past terms
 	if msg.Term < s.currentTerm {
 		println("\033[33m[DEFENSE] Node", s.id, "rejected AppendEntries term", msg.Term, "from", msg.LeaderID, "\033[0m")
 		response["term"] = s.currentTerm
@@ -38,27 +50,22 @@ func (f *Follower) AppendEntries(s *Server, msg AppendEntriesRequest) map[string
 		return response
 	}
 
+	// Leaders shouldn't receive AppendEntries
 	if s.currentState == LEADER {
-		response["term"] = s.currentTerm
-		response["success"] = false
 		println("\033[33m[DEFENSE] Node", s.id, "rejected suspicious AppendEntries term", msg.Term, "from", msg.LeaderID, "\033[0m")
-		return response
-	}
-
-	if s.currentState == LEADER && msg.Term == s.currentTerm {
-		println("\033[33m[DEFENSE] Node", s.id, "rejected AppendEntries term", msg.Term, "from", msg.LeaderID, "\033[0m")
 		response["term"] = s.currentTerm
 		response["success"] = false
 		return response
 	}
 
+	// Update server state
 	s.currentTerm = msg.Term
 	s.votedFor = ""
 	s.currentState = FOLLOWER
 	s.leaderId = msg.LeaderID
 	s.resetElectionTimeout()
 
-	// era so um ping
+	// Handle ping messages
 	if len(msg.Entries) == 0 {
 		response["success"] = true
 		response["term"] = s.currentTerm
@@ -66,79 +73,78 @@ func (f *Follower) AppendEntries(s *Server, msg AppendEntriesRequest) map[string
 		return response
 	}
 
-	// as entries não encaixam com o log deste follower
+	// Check log consistency
 	if msg.PrevLogIndex >= len(s.log) ||
 		(msg.PrevLogIndex >= 0 && s.log[msg.PrevLogIndex].Term != msg.PrevLogTerm) {
-
 		response["term"] = s.currentTerm
 		response["success"] = false
 		return response
 	}
 
-	// neste caso, está tudo perfeito e podemos fazer append das entries ao log
-	index := msg.PrevLogIndex + 1
+	println("Follower", s.id, "received AppendEntries from leader", msg.LeaderID, "with term", msg.Term)
 
-	// temos de perder mensagens caso o log tenha demasiadas entradas que o lider não viu
-	if index < len(s.log) {
-		s.log = s.log[:index]
-	}
-	s.log = append(s.log, msg.Entries...)
+	// Process entries, if any suspicious entries are detected, generate an alert and wait for confirmation
+	success := true
 
-	/*
-		for _, entry := range msg.Entries {
-			if entry.Index < len(s.log) {
-				existingEntry := s.log[entry.Index]
-				if existingEntry.Term == entry.Term && existingEntry.HashEntry() != entry.HashEntry() {
-					alert, _ := NewEquivocationAlertIfApplicable(entry, msg.LeaderID, s)
-					if alert != nil {
-						// Broadcast the alert to all nodes
-						alertMsg := alert.ToRPCMessage()
-						broadcast(s, alertMsg, nil)
-					}
-				}
-			}
-		}
-	*/
+	for _, entry := range msg.Entries {
+		// Check for conflicts in committed entries
+		if entry.Index <= s.commitIndex && entry.Index < len(s.log) && s.log[entry.Index].Command != entry.Command {
+			success = false
+			println("\033[31m[DEFENSE] Node", s.id, "detected suspicious entry at index", entry.Index, "\033[0m")
+			// Generate and broadcast alert
+			alert := NewEquivocationAlert(msg.LeaderID, entry.Index, entry.Term, s.log[entry.Index], entry, msg.Entries)
+			alertMsg := alert.ToRPCMessage()
+			key := fmt.Sprintf("%s:%d:%d", msg.LeaderID, msg.PrevLogIndex, msg.PrevLogTerm)
+			s.pendingAppendEntries[key] = msg
+			broadcast(s, alertMsg, nil)
 
-	// podemos dar commit a mais mensagens, caso o lider tenha dado commit a mensagens que o follower não deu
-	if msg.LeaderCommit > s.commitIndex {
-		lastNewEntryIndex := msg.PrevLogIndex + len(msg.Entries)
-		if msg.LeaderCommit < lastNewEntryIndex {
-			s.commitIndex = msg.LeaderCommit
-		} else {
-			s.commitIndex = lastNewEntryIndex
-		}
-
-		// aplica tudo que tenha sido commit à máquina de estados do follower
-		for i := s.lastApplied + 1; i <= s.commitIndex; i++ {
-			entry := s.log[i]
-			parts := strings.Split(entry.Command, " ")
-
-			if parts[0] == "write" && len(parts) == 3 {
-				s.stateMachine.kv[parts[1]] = parts[2]
-			} else if parts[0] == "cas" && len(parts) == 4 {
-				key := parts[1]
-				from := parts[2]
-				to := parts[3]
-				currentValue, exists := s.stateMachine.kv[key]
-
-				if exists && currentValue == from {
-					s.stateMachine.kv[key] = to
-				}
-			}
-			s.lastApplied = i
-
+			// stall the whole process and wait
+			response["wait"] = true
+			return response
 		}
 	}
-	response["success"] = true
 
+	if success {
+		s.log = append(s.log, msg.Entries...)
+	}
+
+	// Update commit index only if no suspicious entries detected
+	if success && msg.LeaderCommit > s.commitIndex {
+		s.commitIndex = min(msg.LeaderCommit, len(s.log)-1)
+	}
+
+	// Apply committed entries to state machine
+	for i := s.lastApplied + 1; i <= s.commitIndex; i++ {
+		entry := s.log[i]
+		parts := strings.Split(entry.Command, " ")
+		if parts[0] == "write" && len(parts) == 3 {
+			s.stateMachine.kv[parts[1]] = parts[2]
+		} else if parts[0] == "cas" && len(parts) == 4 {
+			key := parts[1]
+			from := parts[2]
+			to := parts[3]
+			currentValue, exists := s.stateMachine.kv[key]
+			if exists && currentValue == from {
+				s.stateMachine.kv[key] = to
+			}
+		}
+		s.lastApplied = i
+	}
+
+	response["success"] = success
 	return response
 }
 
 func (f *Follower) Vote(s *Server, msg RequestVoteRequest) map[string]interface{} {
-
 	response := make(map[string]interface{})
 	if msg.Term < s.currentTerm {
+		response["term"] = s.currentTerm
+		response["vote_granted"] = false
+		return response
+	}
+
+	if f.equivocationDB.IsLeaderBanned(msg.CandidateID) {
+		println("\033[33m[DEFENSE] Node", s.id, "rejected vote from banned candidate", msg.CandidateID, "\033[0m")
 		response["term"] = s.currentTerm
 		response["vote_granted"] = false
 		return response
@@ -167,4 +173,12 @@ func (f *Follower) Vote(s *Server, msg RequestVoteRequest) map[string]interface{
 	}
 	response["term"] = s.currentTerm
 	return response
+}
+
+// Utility function to find minimum of two integers
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
