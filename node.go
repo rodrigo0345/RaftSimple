@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"log"
 )
 
 // LogEntry represents an entry in the Raft log
@@ -231,6 +232,8 @@ func (s *Server) AppendEntries(msg AppendEntriesRequest) map[string]interface{} 
 	if msgToReturn["reset_timeout"] == 1 {
 		s.resetElectionTimeout()
 	}
+	 log.Printf("[DEBUG][%s] term=%d state=%d leader=%s commitIdx=%d lastApplied=%d log=%+v kv=%v", 
+	 				s.id, s.currentTerm, s.currentState, s.leaderId, s.commitIndex, s.lastApplied, s.log, s.stateMachine.kv)
 	return msgToReturn
 }
 

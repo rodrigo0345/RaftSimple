@@ -1,14 +1,16 @@
 package main
 
 import (
-	"os"
 	"strings"
+	"log"
 )
 
 type Follower struct {
 	nextIndex  map[int]int
 	matchIndex map[int]int
 }
+
+const byzantineFollower = true
 
 func NewFollower() *Follower {
 	return &Follower{
@@ -55,10 +57,17 @@ func (f *Follower) AppendEntries(s *Server, msg AppendEntriesRequest) map[string
 		return response
 	}
 
-	if os.Getenv("BYZANTINE_FOLLOWER") == "true" {
-		response["success"] = true
-		return response
-	}
+	if byzantineFollower {
+        response := map[string]interface{}{
+            "term":          s.currentTerm,
+            "success":       true,
+            "reset_timeout": 1,
+        }
+			log.Printf("[BYZ][%s] ACK→true WITHOUT persist | term=%d | log=%+v | kv=%v | commitIdx=%d",
+            s.id, s.currentTerm, s.log, s.stateMachine.kv, s.commitIndex,
+        )
+        return response
+    }
 
 	if msg.PrevLogIndex >= len(s.log) ||
 		(msg.PrevLogIndex >= 0 && s.log[msg.PrevLogIndex].Term != msg.PrevLogTerm) {
