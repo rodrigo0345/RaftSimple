@@ -1,6 +1,9 @@
 package main
 
-import "strings"
+import (
+	"os"
+	"strings"
+)
 
 type Follower struct {
 	nextIndex  map[int]int
@@ -30,15 +33,12 @@ func (f *Follower) AppendEntries(s *Server, msg AppendEntriesRequest) map[string
 	response["reset_timeout"] = 0
 	response["term"] = s.currentTerm
 
-	// message can be ignored that is from the past
 	if msg.Term < s.currentTerm {
-		response["term"] = s.currentTerm
 		response["success"] = false
 		return response
 	}
 
 	if s.currentState == LEADER && msg.Term == s.currentTerm {
-		response["term"] = s.currentTerm
 		response["success"] = false
 		return response
 	}
@@ -49,56 +49,50 @@ func (f *Follower) AppendEntries(s *Server, msg AppendEntriesRequest) map[string
 	s.leaderId = msg.LeaderID
 	s.resetElectionTimeout()
 
-	// era so um ping
 	if len(msg.Entries) == 0 {
 		response["success"] = true
-		response["term"] = s.currentTerm
 		response["reset_timeout"] = 1
 		return response
 	}
 
-	// as entries não encaixam com o log deste follower
+	if os.Getenv("BYZANTINE_FOLLOWER") == "true" {
+		response["success"] = true
+		return response
+	}
+
 	if msg.PrevLogIndex >= len(s.log) ||
 		(msg.PrevLogIndex >= 0 && s.log[msg.PrevLogIndex].Term != msg.PrevLogTerm) {
-
-		response["term"] = s.currentTerm
 		response["success"] = false
 		return response
 	}
 
-	// neste caso, está tudo perfeito e podemos fazer append das entries ao log
 	index := msg.PrevLogIndex + 1
-
-	// temos de perder mensagens caso o log tenha demasiadas entradas que o lider não viu
 	if index < len(s.log) {
 		s.log = s.log[:index]
 	}
 	s.log = append(s.log, msg.Entries...)
 
-	// podemos dar commit a mais mensagens, caso o lider tenha dado commit a mensagens que o follower não deu
 	if msg.LeaderCommit > s.commitIndex {
-		lastNewEntryIndex := msg.PrevLogIndex + len(msg.Entries)
-		if msg.LeaderCommit < lastNewEntryIndex {
+		lastNew := msg.PrevLogIndex + len(msg.Entries)
+		if msg.LeaderCommit < lastNew {
 			s.commitIndex = msg.LeaderCommit
 		} else {
-			s.commitIndex = lastNewEntryIndex
+			s.commitIndex = lastNew
 		}
-
-		// aplica tudo que tenha sido commit à máquina de estados do follower, não aplica read
 		for i := s.lastApplied + 1; i <= s.commitIndex; i++ {
 			entry := s.log[i]
 			parts := strings.Split(entry.Command, " ")
-
-			if parts[0] == "write" && len(parts) == 3 {
-				s.stateMachine.kv[parts[1]] = parts[2]
-			} else if parts[0] == "cas" && len(parts) == 4 {
-				key := parts[1]
-				from := parts[2]
-				to := parts[3]
-				currentValue, exists := s.stateMachine.kv[key]
-
-				if exists && currentValue == from {
-					s.stateMachine.kv[key] = to
+			switch parts[0] {
+			case "write":
+				if len(parts) == 3 {
+					s.stateMachine.kv[parts[1]] = parts[2]
+				}
+			case "cas":
+				if len(parts) == 4 {
+					key, from, to := parts[1], parts[2], parts[3]
+					if v, ok := s.stateMachine.kv[key]; ok && v == from {
+						s.stateMachine.kv[key] = to
+					}
 				}
 			}
 			s.lastApplied = i

@@ -376,6 +376,13 @@ func main() {
 			reply(msg, body)
 			break
 
+		case "dump":
+			reply(msg, map[string]interface{}{
+				"type":  "dump_ok",
+				"state": server.stateMachine.kv,
+			})
+			break
+
 		case "request_vote_ok":
 			server.Lock()
 			voteGranted := body["vote_granted"].(bool)
@@ -384,6 +391,7 @@ func main() {
 			server.candidate.HandleVoteResponse(server, voterID, term, voteGranted)
 			server.Unlock()
 		}
+
 	}
 	if err := scanner.Err(); err != nil {
 		log.Fatal(err)
