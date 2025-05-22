@@ -16,6 +16,13 @@ type MessageInternal struct {
 	Body json.RawMessage `json:"body"`
 }
 
+type LogDigestMessage struct {
+	Type      string `json:"type"`
+	LastIndex int    `json:"last_index"`
+	Hash      []byte `json:"hash"`
+	Term      int    `json:"term"`
+}
+
 type BaseBody struct {
 	MsgID int `json:"msg_id"`
 }
