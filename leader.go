@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"log"
 	"strconv"
@@ -52,6 +53,14 @@ func (l *Leader) Read(s *Server, key string, clientMessage *MessageInternal, msg
 		Message:     clientMessage,
 		MessageFrom: msgFrom,
 	}
+
+	var prevHash [32]byte
+	if len(s.log) > 0 {
+		prevHash = s.log[len(s.log)-1].Cumulative
+	}
+
+	hashInput := append(prevHash[:], []byte(fmt.Sprintf("%d|%s", entry.Term, entry.Command))...)
+	entry.Cumulative = sha256.Sum256(hashInput)
 	s.log = append(s.log, entry)
 
 	prevLogIndex := len(s.log) - 2
@@ -78,7 +87,16 @@ func (l *Leader) Write(s *Server, key string, value string, clientMessage *Messa
 		Message:     clientMessage,
 		MessageFrom: msgFrom,
 	}
+
+	// Compute cumulative hash
+	var prevHash [32]byte
+	if len(s.log) > 0 {
+		prevHash = s.log[len(s.log)-1].Cumulative
+	}
+	hashInput := append(prevHash[:], []byte(fmt.Sprintf("%d|%s", entry.Term, entry.Command))...)
+	entry.Cumulative = sha256.Sum256(hashInput)
 	s.log = append(s.log, entry)
+
 	if s.byzantineMode {
 		log.Printf("[%s] Byzantine mode enabled: will send conflicting write command for key %s to node n2", s.id, key)
 	}
@@ -109,7 +127,16 @@ func (l *Leader) Cas(s *Server, key string, from string, to string, message *Mes
 		Message:     message,
 		MessageFrom: msgFrom,
 	}
+
+	// Compute cumulative hash
+	var prevHash [32]byte
+	if len(s.log) > 0 {
+		prevHash = s.log[len(s.log)-1].Cumulative
+	}
+	hashInput := append(prevHash[:], []byte(fmt.Sprintf("%d|%s", entry.Term, entry.Command))...)
+	entry.Cumulative = sha256.Sum256(hashInput)
 	s.log = append(s.log, entry)
+
 	if s.byzantineMode {
 		log.Printf("[%s] Byzantine mode enabled: will send conflicting CAS command for key %s to node n2", s.id, key)
 	}
