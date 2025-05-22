@@ -4,6 +4,7 @@ package main
 
 import (
 	"bufio"
+	"crypto/sha256"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -15,6 +16,12 @@ import (
 
 var server *Server
 var byzantineMode bool // Global flag for Byzantine behavior
+
+// computeCumulativeHash calculates the cumulative hash for a log entry
+func computeCumulativeHash(prevHash [32]byte, term int, command string) [32]byte {
+	hashInput := append(prevHash[:], []byte(fmt.Sprintf("%d|%s", term, command))...)
+	return sha256.Sum256(hashInput)
+}
 
 func followerToCandidate(msg map[string]interface{}) {
 	if server != nil {
@@ -409,42 +416,42 @@ func broadcast(server *Server, msg map[string]interface{}, originalMessage *Mess
 		if node == server.id {
 			continue
 		}
-
-		// Create a copy of the message to modify entries for Byzantine mode
+		// Create a deep copy of the message to avoid modifying the original
 		msgCopy := make(map[string]interface{})
 		for k, v := range msg {
 			if k == "entries" {
-				// Deep copy entries to avoid modifying the original
+				// Deep copy entries
 				entriesRaw, _ := json.Marshal(v)
 				var entries []LogEntry
 				json.Unmarshal(entriesRaw, &entries)
-				if server.byzantineMode && node == "n2" && len(entries) > 0 {
-					// Introduce Byzantine fault: change the command for node n2
-					byzantineEntries := make([]LogEntry, len(entries))
-					copy(byzantineEntries, entries)
-					for i := range byzantineEntries {
-						if strings.HasPrefix(byzantineEntries[i].Command, "write") {
-							// Example: Change "write key value" to "write key <different_value>"
-							parts := strings.Split(byzantineEntries[i].Command, " ")
-							if len(parts) == 3 {
-								originalValue := parts[2]
-								newValue := originalValue + "_byzantine" // Append suffix to create conflict
-								byzantineEntries[i].Command = fmt.Sprintf("write %s %s", parts[1], newValue)
-							}
-						} else if strings.HasPrefix(byzantineEntries[i].Command, "cas") {
-							// Example: Change "cas key from to" to "cas key from <different_to>"
-							parts := strings.Split(byzantineEntries[i].Command, " ")
-							if len(parts) == 4 {
-								originalTo := parts[3]
-								newTo := originalTo + "_byzantine"
-								byzantineEntries[i].Command = fmt.Sprintf("cas %s %s %s", parts[1], parts[2], newTo)
-							}
+				// Apply Byzantine fault for n2
+				if byzantineMode && node == "n2" {
+					for i := range entries {
+						originalCmd := entries[i].Command
+						entries[i].Command = originalCmd + "_byzantine"
+						log.Printf("[Broadcast] Byzantine mode: modified command for n2 to %s", entries[i].Command)
+						// Compute Cumulative hash
+						var prevHash [32]byte
+						if entries[i].Index > 0 && len(server.log) > entries[i].Index-1 {
+							prevHash = server.log[entries[i].Index-1].Cumulative
 						}
+						hashInput := append(prevHash[:], []byte(fmt.Sprintf("%d|%s", entries[i].Term, entries[i].Command))...)
+						entries[i].Cumulative = sha256.Sum256(hashInput)
+						log.Printf("[Broadcast] Computed hash for n2 entry index=%d: %x", entries[i].Index, entries[i].Cumulative[:8])
 					}
-					msgCopy[k] = byzantineEntries
 				} else {
-					msgCopy[k] = entries
+					// Compute Cumulative hash for non-n2 nodes
+					for i := range entries {
+						var prevHash [32]byte
+						if entries[i].Index > 0 && len(server.log) > entries[i].Index-1 {
+							prevHash = server.log[entries[i].Index-1].Cumulative
+						}
+						hashInput := append(prevHash[:], []byte(fmt.Sprintf("%d|%s", entries[i].Term, entries[i].Command))...)
+						entries[i].Cumulative = sha256.Sum256(hashInput)
+						log.Printf("[Broadcast] Computed hash for node %s entry index=%d: %x", node, entries[i].Index, entries[i].Cumulative[:8])
+					}
 				}
+				msgCopy[k] = entries
 			} else {
 				msgCopy[k] = v
 			}

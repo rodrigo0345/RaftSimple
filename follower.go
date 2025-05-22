@@ -80,6 +80,9 @@ func (f *Follower) AppendEntries(s *Server, msg AppendEntriesRequest) map[string
 	if index < len(s.log) {
 		s.log = s.log[:index]
 	}
+	for i, entry := range msg.Entries {
+		log.Printf("[Follower %s] Appending entry index=%d, command=%s, cumulative=%x\n", s.id, index+i, entry.Command, entry.Cumulative[:8]) // Log first 8 bytes of hash
+	}
 	s.log = append(s.log, msg.Entries...)
 	log.Printf("[Follower %s] Appended %d entries, new log length: %d\n", s.id, len(msg.Entries), len(s.log))
 
