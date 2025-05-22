@@ -11,9 +11,10 @@ import (
 
 // LogEntry represents an entry in the Raft log
 type LogEntry struct {
-	Term    int    `json:"term"`
-	Index   int    `json:"index"`
-	Command string `json:"command"`
+	Term       int      `json:"term"`
+	Index      int      `json:"index"`
+	Command    string   `json:"command"`
+	Cumulative [32]byte `json:"cumulative"` // Cumulative hash of log prefix up to this entry
 	// usado para retornar uma resposta a quem a mandou
 	Message     *MessageInternal
 	MessageFrom string // last node that sent the message to the leader
