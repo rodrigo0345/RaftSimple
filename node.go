@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"math/rand"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -178,6 +179,7 @@ func NewServer(id string, nodes []string,
 			case <-s.digestTimer.C:
 				s.Lock()
 				s.sendLogDigest()
+				s.PrintCommittedLog()
 				s.resetDigestTimer()
 				s.Unlock()
 			}
@@ -212,6 +214,23 @@ func (s *Server) resetLeaderTimeout() {
 
 func (s *Server) resetDigestTimer() {
 	s.digestTimer.Reset(time.Millisecond * 100)
+}
+
+// PrintCommittedLog prints the committed log entries up to commitIndex
+func (s *Server) PrintCommittedLog() {
+	fmt.Fprintf(os.Stderr, "[%s] Committed Log (commitIndex=%d, log length=%d):\n", s.id, s.commitIndex, len(s.log))
+	if s.commitIndex < 0 || len(s.log) == 0 {
+		fmt.Fprintf(os.Stderr, "[%s] No committed entries\n", s.id)
+		return
+	}
+	for i := 0; i <= s.commitIndex && i < len(s.log); i++ {
+		entry := s.log[i]
+		fmt.Fprintf(os.Stderr, "[%s] Index=%d, Term=%d, Command=%s, Hash=%x\n",
+			s.id, entry.Index, entry.Term, entry.Command, entry.Cumulative[:8])
+	}
+	if err := os.Stderr.Sync(); err != nil {
+		fmt.Fprintf(os.Stderr, "[%s] PrintCommittedLog: failed to flush stderr: %v\n", s.id, err)
+	}
 }
 
 // sendLogDigest sends the current log digest to the next neighbor

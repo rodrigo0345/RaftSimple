@@ -9,7 +9,9 @@ import (
 	"log"
 	"math/rand"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 )
 
 var server *Server
@@ -46,6 +48,19 @@ func candidateStartNewElection(msg map[string]interface{}) {
 }
 
 func main() {
+
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGTERM, os.Interrupt)
+
+	go func() {
+		<-sig
+		if server != nil {
+			fmt.Fprintf(os.Stderr, "[%s] SIGTERM recebido, committed log:\n", nodeID)
+			server.PrintCommittedLog() // faz Printlns ou Fprintf no os.Stderr
+		}
+		os.Stderr.Sync() // força flush
+		os.Exit(0)
+	}()
 	flag.BoolVar(&byzantineMode, "byzantine", false, "Enable Byzantine AppendEntries fault")
 	flag.Parse()
 
@@ -329,7 +344,15 @@ func main() {
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		log.Fatal(err)
+		fmt.Printf("[%s] Scanner error: %v, printing committed log", nodeID, err)
+		if server != nil {
+			server.PrintCommittedLog()
+		}
+	} else {
+		fmt.Printf("[%s] Scanner exited, printing committed log", nodeID)
+		if server != nil {
+			server.PrintCommittedLog()
+		}
 	}
 }
 
@@ -359,12 +382,13 @@ func broadcast(server *Server, msg map[string]interface{}, originalMessage *Mess
 						prevHash = server.log[entries[i].Index-1].Cumulative
 					}
 					command := entries[i].Command
-					if byzantineMode && node == "n2" {
+					if byzantineMode && node == "n2" && server.id == "n0" {
 						command = command + "_byzantine"
 						log.Printf("[Broadcast] Byzantine mode: modified command for n2 to %s", command)
 					}
 					hashInput := append(prevHash[:], []byte(fmt.Sprintf("%d|%s", entries[i].Term, command))...)
 					entries[i].Cumulative = sha256.Sum256(hashInput)
+					entries[i].Command = command
 					log.Printf("[Broadcast] Computed hash for node %s entry index=%d: %x", node, entries[i].Index, entries[i].Cumulative[:8])
 					// Update leader's log with non-Byzantine hash
 					if node != "n2" || !byzantineMode {
