@@ -301,3 +301,90 @@ func (l *Leader) WaitForReplication(s *Server, followerID string, success bool, 
 
 	return WRITE_OK, nil, confirmedOps
 }
+
+
+func (l *Leader) CommitImmediately(s *Server) []ConfirmedOperation {
+    newCommitIndex := len(s.log) - 1
+    var confirmedOps []ConfirmedOperation
+    if newCommitIndex > s.commitIndex {
+        s.commitIndex = newCommitIndex
+        for i := s.lastApplied + 1; i <= s.commitIndex; i++ {
+            entry := s.log[i]
+            parts := strings.Split(entry.Command, " ")
+            var response map[string]interface{}
+            var messageType Operation
+            switch parts[0] {
+            case "write":
+                if len(parts) >= 3 {
+                    key := parts[1]
+                    value := parts[2]
+                    s.stateMachine.kv[key] = value
+                    messageType = WRITE
+                    response = map[string]interface{}{
+                        "type": "write_ok",
+                    }
+                }
+            case "cas":
+                if len(parts) >= 4 {
+                    key := parts[1]
+                    from := parts[2]
+                    to := parts[3]
+                    currentValue, exists := s.stateMachine.kv[key]
+                    if !exists {
+                        messageType = CAS_INVALID_KEY
+                        response = map[string]interface{}{
+                            "type": "error",
+                            "code": 20,
+                            "text": "CAS target key does not exist",
+                        }
+                    } else if currentValue != from {
+                        messageType = CAS_INVALID_FROM
+                        response = map[string]interface{}{
+                            "type": "error",
+                            "code": 22,
+                            "text": fmt.Sprintf("CAS target key does not match `from` in CAS: %s != %s", currentValue, from),
+                        }
+                    } else {
+                        s.stateMachine.kv[key] = to
+                        messageType = CAS
+                        response = map[string]interface{}{
+                            "type": "cas_ok",
+                        }
+                    }
+                }
+            case "noop":
+                if len(parts) >= 2 {
+                    key := parts[1]
+                    var value string
+                    var exists bool
+                    value, exists = s.stateMachine.kv[key]
+                    if exists {
+                        valueInt, _ := strconv.Atoi(value)
+                        response = map[string]interface{}{
+                            "type":  "read_ok",
+                            "value": valueInt,
+                        }
+                    } else {
+                        response = map[string]interface{}{
+                            "type":  "read_ok",
+                            "value": nil,
+                        }
+                    }
+                    messageType = READ
+                }
+            }
+            if response != nil && entry.Message != nil && !l.respondedMessages[entry.Message] {
+                confirmedOp := ConfirmedOperation{
+                    ClientMessage: entry.Message,
+                    MessageFrom:   entry.MessageFrom,
+                    MessageType:   messageType,
+                    Response:      response,
+                }
+                confirmedOps = append(confirmedOps, confirmedOp)
+                l.respondedMessages[entry.Message] = true
+            }
+            s.lastApplied = i
+        }
+    }
+    return confirmedOps
+}

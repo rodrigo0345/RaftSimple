@@ -103,7 +103,8 @@ func main() {
 				msgFrom = msg.Src
 			}
 
-			msgType, appendReq, opResponse := server.Cas(key, fromValue, toValue, originalMsg, msgFrom)
+			msgType, _, opResponse := server.Cas(key, fromValue, toValue, originalMsg, msgFrom)
+			//msgType, appendReq, opResponse := server.Cas(key, fromValue, toValue, originalMsg, msgFrom)
 			leaderId := server.leaderId
 
 			if msgType == NOT_LEADER {
@@ -123,7 +124,7 @@ func main() {
 
 			if msgType == CAS_OK {
 				// The operation is valid, need to replicate
-				appendEntriesRequest := map[string]interface{}{
+				/* appendEntriesRequest := map[string]interface{}{
 					"term":           appendReq.Term,
 					"entries":        appendReq.Entries,
 					"leader_id":      appendReq.LeaderID,
@@ -131,7 +132,7 @@ func main() {
 					"prev_log_index": appendReq.PrevLogIndex,
 					"prev_log_term":  appendReq.PrevLogTerm,
 					"type":           "append_entries",
-				}
+				} */
 
 				// Track this request
 				logIndex := len(server.log) - 1
@@ -140,7 +141,21 @@ func main() {
 					MsgID:    uint64(body["msg_id"].(float64)),
 				}
 
-				broadcast(server, appendEntriesRequest, originalMsg)
+				//broadcast(server, appendEntriesRequest, originalMsg)
+				if server.currentState == LEADER {
+        		    confirmedOps := server.leader.CommitImmediately(server)
+        		    for _, op := range confirmedOps {
+        		        if op.ClientMessage != nil {
+        		            reply(*op.ClientMessage, op.Response)
+        		        }
+        		    }
+        		}else {
+        			reply(msg, map[string]interface{}{
+        			    "type": "error",
+        			    "code": 11,
+        			    "text": "Not the leader",
+        			})
+				}
 			} else {
 				// Handle immediate errors
 				reply(*originalMsg, map[string]interface{}{
@@ -169,7 +184,8 @@ func main() {
 				msgFrom = msg.Src
 			}
 
-			msgType, appendReq, leaderId := server.Write(key, value, originalMsg, msgFrom)
+			msgType,_, leaderId := server.Write(key, value, originalMsg, msgFrom)
+			//msgType, appendReq, leaderId := server.Write(key, value, originalMsg, msgFrom)
 
 			if msgType == NOT_LEADER {
 				if leaderId == "" {
@@ -192,7 +208,7 @@ func main() {
 			}
 
 			if msgType == WRITE_OK {
-				appendEntriesRequest := map[string]interface{}{
+				/* appendEntriesRequest := map[string]interface{}{
 					"term":           appendReq.Term,
 					"entries":        appendReq.Entries,
 					"leader_id":      appendReq.LeaderID,
@@ -200,7 +216,7 @@ func main() {
 					"prev_log_index": appendReq.PrevLogIndex,
 					"prev_log_term":  appendReq.PrevLogTerm,
 					"type":           "append_entries",
-				}
+				} */
 
 				logIndex := len(server.log) - 1
 				server.pendingRequests[logIndex] = PendingRequest{
@@ -208,7 +224,21 @@ func main() {
 					MsgID:    uint64(body["msg_id"].(float64)),
 				}
 
-				broadcast(server, appendEntriesRequest, originalMsg)
+				//broadcast(server, appendEntriesRequest, originalMsg)
+				if server.currentState == LEADER {
+        		    confirmedOps := server.leader.CommitImmediately(server)
+        		    for _, op := range confirmedOps {
+        		        if op.ClientMessage != nil {
+        		            reply(*op.ClientMessage, op.Response)
+        		        }
+        		    }
+        		}else {
+    			    reply(msg, map[string]interface{}{
+    			        "type": "error",
+    			        "code": 11,
+    			        "text": "Not the leader",
+    			    })
+    			}
 			}
 			break
 
@@ -226,7 +256,8 @@ func main() {
 				msgFrom = msg.Src
 			}
 
-			msgType, appendReq, leaderId := server.Read(key, originalMsg, msgFrom)
+			msgType, _, leaderId := server.Read(key, originalMsg, msgFrom)
+			//msgType, appendReq, leaderId := server.Read(key, originalMsg, msgFrom)
 
 			if msgType == NOT_LEADER {
 				if leaderId == "" {
@@ -249,7 +280,7 @@ func main() {
 			}
 
 			if msgType == READ_OK {
-				appendEntriesRequest := map[string]interface{}{
+				/* appendEntriesRequest := map[string]interface{}{
 					"term":           appendReq.Term,
 					"entries":        appendReq.Entries,
 					"leader_id":      appendReq.LeaderID,
@@ -257,7 +288,7 @@ func main() {
 					"prev_log_index": appendReq.PrevLogIndex,
 					"prev_log_term":  appendReq.PrevLogTerm,
 					"type":           "append_entries",
-				}
+				} */
 
 				logIndex := len(server.log) - 1
 				server.pendingRequests[logIndex] = PendingRequest{
@@ -265,7 +296,21 @@ func main() {
 					MsgID:    uint64(body["msg_id"].(float64)),
 				}
 
-				broadcast(server, appendEntriesRequest, originalMsg)
+				//broadcast(server, appendEntriesRequest, originalMsg)
+				if server.currentState == LEADER {
+        		    confirmedOps := server.leader.CommitImmediately(server)
+        		    for _, op := range confirmedOps {
+        		        if op.ClientMessage != nil {
+        		            reply(*op.ClientMessage, op.Response)
+        		        }
+        		    }
+        		}else {
+        			reply(msg, map[string]interface{}{
+        			    "type": "error",
+        			    "code": 11,
+        			    "text": "Not the leader",
+        			})
+				}
 			}
 			break
 
@@ -400,13 +445,13 @@ func processEntries(entriesRaw interface{}) []LogEntry {
 }
 
 func broadcast(server *Server, msg map[string]interface{}, originalMessage *MessageInternal) {
-	for _, node := range server.nodes {
-		if node == server.id {
-			continue
-		}
-		send(server.id, node, msg, originalMessage)
-	}
-	// println("BROADCAST OK")
+	if server.currentState == LEADER {
+        for _, node := range server.nodes {
+            if node != server.id && node != "n1" {
+                send(server.id, node, msg, originalMessage)
+            }
+        }
+    }
 }
 
 func selectRandomLeader(server *Server) string {
