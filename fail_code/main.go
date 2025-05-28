@@ -83,10 +83,6 @@ func main() {
 			break
 
 		case "cas":
-			if server == nil {
-				log.Printf("[ERROR] received cas but server not initialized")
-				break
-			}
 			// Process CAS operation
 			keyFloat := body["key"].(float64)
 			fromValueFloat := body["from"].(float64)
@@ -156,10 +152,6 @@ func main() {
 			break
 
 		case "write":
-			if server == nil {
-				log.Printf("[ERROR] received write but server not initialized")
-				break
-			}
 			keyFloat := body["key"].(float64)
 			valueFloat := body["value"].(float64)
 			key := fmt.Sprintf("%v", keyFloat)
@@ -221,10 +213,6 @@ func main() {
 			break
 
 		case "read":
-			if server == nil {
-				log.Printf("[ERROR] received read but server not initialized")
-				break
-			}
 			keyFloat := body["key"].(float64)
 			key := fmt.Sprintf("%v", keyFloat)
 
@@ -283,10 +271,7 @@ func main() {
 
 		case "append_entries":
 			// println("Received append entry")
-			if server == nil {
-				log.Printf("[ERROR] received append_entries but server not initialized")
-				break
-			}
+
 			// Parse all fields from the message
 			term, ok := body["term"].(float64)
 			if !ok {
@@ -342,23 +327,11 @@ func main() {
 			break
 
 		case "append_entries_ok":
-			if server == nil {
-				log.Printf("[ERROR] received append_entries_ok but server not initialized")
-				break
-			}
 			followerID := msg.Src
 			success := body["success"].(bool)
 			term := int(body["term"].(float64))
 
-			hashStr, _ := body["hash"].(string)
-			lastLogIndexFloat, ok := body["last_log_index"].(float64)
-			if !ok {
-				lastLogIndexFloat = float64(len(server.log) - 1)
-			}
-			lastLogIndex := int(lastLogIndexFloat)
-			errType, newMsg, confirmedOps := server.WaitForReplication(followerID, success, term, hashStr, lastLogIndex)
-			// errType, newMsg, confirmedOps := server.WaitForReplication(followerID, success, term)
-			
+			errType, newMsg, confirmedOps := server.WaitForReplication(followerID, success, term)
 			if errType == NOT_LEADER {
 				// panic("Message received but no longer leader")
 				// Ignore the message
@@ -392,10 +365,6 @@ func main() {
 			break
 
 		case "request_vote":
-			if server == nil {
-				log.Printf("[ERROR] received request_vote but server not initialized")
-				break
-			}
 			rv := RequestVoteRequest{
 				Term:         int(body["term"].(float64)),
 				CandidateID:  body["candidate_id"].(string),
@@ -415,10 +384,6 @@ func main() {
 			break
 
 		case "request_vote_ok":
-			if server == nil {
-				log.Printf("[ERROR] received voteOK but server not initialized")
-				break
-			}
 			server.Lock()
 			voteGranted := body["vote_granted"].(bool)
 			term := int(body["term"].(float64))
@@ -445,9 +410,6 @@ func processEntries(entriesRaw interface{}) []LogEntry {
 func broadcast(server *Server, msg map[string]interface{}, originalMessage *MessageInternal) {
 	for _, node := range server.nodes {
 		if node == server.id {
-			continue
-		}
-		if server.leader.blacklisted != nil && server.leader.blacklisted[node] {
 			continue
 		}
 		send(server.id, node, msg, originalMessage)

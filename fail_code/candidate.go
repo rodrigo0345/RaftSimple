@@ -1,9 +1,5 @@
 package main
 
-import (
-	"log"
-)
-
 type Candidate struct {
 	Term        int
 	Votes       map[string]int
@@ -64,8 +60,7 @@ func (c *Candidate) AcceptVote(voterId string, term int, success bool) bool {
 func (c *Candidate) HandleVoteResponse(s *Server, voterId string, term int, voteGranted bool) {
 	// If the response term is higher, step down to follower
 	if term > c.node.currentTerm {
-		// println("STEPPING DOWN TO FOLLOWER")
-		log.Printf("[CANDIDATE][%s] step down to follower", c.node.id)
+		println("STEPPING DOWN TO FOLLOWER")
 		c.node.currentTerm = term
 		c.node.currentState = FOLLOWER
 		c.node.votedFor = ""
@@ -94,8 +89,7 @@ func (c *Candidate) HandleVoteResponse(s *Server, voterId string, term int, vote
 	if countVotes >= c.NeededVotes {
 		// Transition to leader
 		c.node.currentState = LEADER
-		// println("\033[32m[" + s.id + "] IS NOW THE LEADER\033[0m")
-		log.Printf("[LEADER][%s] passou a líder", c.node.id)
+		println("\033[32m[" + s.id + "] IS NOW THE LEADER\033[0m")
 		c.node.leaderId = c.node.id
 
 		// send immidiate heartbeat

@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"log"
-	"encoding/hex"
 )
 
 type Leader struct {
@@ -13,11 +11,6 @@ type Leader struct {
 	nextIndex         map[string]int
 	matchIndex        map[string]int
 	respondedMessages map[*MessageInternal]bool // Tracks messages already responded to
-
-	peers        []string
-    commitIndex  int
-    // novo mapa de followers marcados como bizantinos
-    blacklisted  map[string]bool
 }
 
 func NewLeader() *Leader {
@@ -25,7 +18,6 @@ func NewLeader() *Leader {
 		nextIndex:         map[string]int{},
 		matchIndex:        map[string]int{},
 		respondedMessages: make(map[*MessageInternal]bool),
-		blacklisted:        make(map[string]bool),
 	}
 }
 
@@ -59,13 +51,6 @@ func (l *Leader) Read(s *Server, key string, clientMessage *MessageInternal, msg
 		Message:     clientMessage,
 		MessageFrom: msgFrom,
 	}
-	prevHash := []byte(nil)
-	prevIndex := entry.Index - 1
-	if prevIndex >= 0 {
-		prevHash = s.log[prevIndex].Hash
-	}
-	entry.Hash = computeEntryHash(prevHash, &entry)
-
 	s.log = append(s.log, entry)
 
 	prevLogIndex := len(s.log) - 2
@@ -92,13 +77,6 @@ func (l *Leader) Write(s *Server, key string, value string, clientMessage *Messa
 		Message:     clientMessage,
 		MessageFrom: msgFrom,
 	}
-	prevHash := []byte(nil)
-	prevIndex := entry.Index - 1
-	if prevIndex >= 0 {
-		prevHash = s.log[prevIndex].Hash
-	}
-	entry.Hash = computeEntryHash(prevHash, &entry)
-
 	s.log = append(s.log, entry)
 
 	prevLogIndex := len(s.log) - 2
@@ -127,13 +105,6 @@ func (l *Leader) Cas(s *Server, key string, from string, to string, message *Mes
 		Message:     message,
 		MessageFrom: msgFrom,
 	}
-	prevHash := []byte(nil)
-	prevIndex := entry.Index - 1
-	if prevIndex >= 0 {
-		prevHash = s.log[prevIndex].Hash
-	}
-	entry.Hash = computeEntryHash(prevHash, &entry)
-
 	s.log = append(s.log, entry)
 
 	prevLogIndex := len(s.log) - 2
@@ -152,42 +123,7 @@ func (l *Leader) Cas(s *Server, key string, from string, to string, message *Mes
 	}, ""
 }
 
-func (l *Leader) numActivePeers() int {
-    cnt := 0
-    for _, p := range l.peers {
-        if !l.blacklisted[p] {
-            cnt++
-        }
-    }
-    return cnt
-}
-
-func (l *Leader) majority() int {
-    // quorum sobre o conjunto activo
-    active := l.numActivePeers() + 1 // +1 para o próprio líder
-    return (active / 2) + 1
-}
-
-/*
-func (l *Leader) WaitForReplication(s *Server, followerID string, success bool, term int, followerHash string) (MessageType, *AppendEntriesRequest, []ConfirmedOperation) {
-	if len(s.log) == 0 {
-		log.Printf("[DEBUG] No entries to confirm for follower %s, returning heartbeat", followerID)
-        // Não há entradas para confirmar, pode ser um heartbeat, retorna sem erro
-        return WRITE_OK, nil, nil
-    }
-	
-	if success {
-		// índice que acabámos de enviar é sempre len(s.log)-1
-		idx := len(s.log) - 1
-		expected := hex.EncodeToString(s.log[idx].Hash)
-		if followerHash != "" && followerHash != expected {
-			log.Printf("[Byzantine] nó %s marcado como bizantino: hash %q ≠ %q", followerID, followerHash, expected)
-			// blacklist e ignora-o nas futuras contagens
-			l.blacklisted[followerID] = true
-			// return INVALID_REPLICATION, nil, nil
-		}
-	}
-	
+func (l *Leader) WaitForReplication(s *Server, followerID string, success bool, term int) (MessageType, *AppendEntriesRequest, []ConfirmedOperation) {
 	// If the leader receives a term higher than its current term, step down
 	if term > s.currentTerm {
 		s.currentTerm = term
@@ -256,224 +192,12 @@ func (l *Leader) WaitForReplication(s *Server, followerID string, success bool, 
 
 		count := 1 // Include leader's own log
 		for fid, matchIdx := range l.matchIndex {
-			if fid == s.id {
-			continue
-			}
-			if l.blacklisted[fid] {
-				continue
-			}
-			if matchIdx >= index {
+			if fid != s.id && matchIdx >= index {
 				count++
 			}
 		}
 
-		if count >= l.majority() {
-			newCommitIndex = index
-		} else {
-			break
-		}
-	}
-
-	// Apply entries and collect confirmed operations
-	var confirmedOps []ConfirmedOperation
-	if newCommitIndex > s.commitIndex {
-		s.commitIndex = newCommitIndex
-
-		// Apply all committed entries that haven't been applied yet
-		for i := s.lastApplied + 1; i <= s.commitIndex; i++ {
-			entry := s.log[i]
-			parts := strings.Split(entry.Command, " ")
-			var response map[string]interface{}
-			var messageType Operation
-
-			switch parts[0] {
-			case "write":
-				if len(parts) >= 3 {
-					key := parts[1]
-					value := parts[2]
-					s.stateMachine.kv[key] = value
-					messageType = WRITE
-					response = map[string]interface{}{
-						"type": "write_ok",
-					}
-				}
-				break
-
-			case "noop":
-				if len(parts) >= 2 {
-					key := parts[1]
-					var value string
-					var exists bool
-
-					value, exists = s.stateMachine.kv[key]
-					if exists {
-						valueInt, _ := strconv.Atoi(value)
-						response = map[string]interface{}{
-							"type":  "read_ok",
-							"value": valueInt,
-						}
-					} else {
-						response = map[string]interface{}{
-							"type":  "read_ok",
-							"value": nil,
-						}
-					}
-					messageType = READ
-				}
-				break
-
-			case "cas":
-				if len(parts) >= 4 {
-					key := parts[1]
-					from := parts[2]
-					to := parts[3]
-					currentValue, exists := s.stateMachine.kv[key]
-
-					if !exists {
-						messageType = CAS_INVALID_KEY
-						response = map[string]interface{}{
-							"type": "error",
-							"code": 20,
-							"text": "CAS target key does not exist",
-						}
-					} else if currentValue != from {
-						messageType = CAS_INVALID_FROM
-						displayMessage := fmt.Sprintf("CAS target key does not match `from` in CAS: %s != %s", currentValue, from)
-						response = map[string]interface{}{
-							"type": "error",
-							"code": 22,
-							"text": displayMessage,
-						}
-					} else {
-						s.stateMachine.kv[key] = to
-						messageType = CAS
-						response = map[string]interface{}{
-							"type": "cas_ok",
-						}
-					}
-				}
-			}
-
-			// Record the confirmed operation only if we have a client message and haven't responded yet
-			if response != nil && entry.Message != nil && !l.respondedMessages[entry.Message] {
-				confirmedOp := ConfirmedOperation{
-					ClientMessage: entry.Message,
-					MessageFrom:   entry.MessageFrom,
-					MessageType:   messageType,
-					Response:      response,
-				}
-				confirmedOps = append(confirmedOps, confirmedOp)
-				l.respondedMessages[entry.Message] = true // Mark as responded
-			}
-			s.lastApplied = i
-		}
-	}
-
-	return WRITE_OK, nil, confirmedOps
-}
-*/
-
-func (l *Leader) WaitForReplication(s *Server, followerID string, success bool, term int, followerHash string, index int ) (MessageType, *AppendEntriesRequest, []ConfirmedOperation) {
-	if len(s.log) == 0 {
-		log.Printf("[DEBUG] No entries to confirm for follower %s, heartbeat response", followerID)
-		return WRITE_OK, nil, nil
-	}
-	
-	if success && followerHash != "" {
-		if index < 0 || index >= len(s.log) {
-			log.Printf("[DEBUG] Invalid index for hash validation: %d", index)
-		} else {
-			expected := hex.EncodeToString(s.log[index].Hash)
-			if followerHash != expected {
-				log.Printf("[Byzantine] nó %s marcado como bizantino: hash %q ≠ %q", followerID, followerHash, expected)
-				l.blacklisted[followerID] = true
-			} else {
-				log.Printf("[DEBUG] Hash validation OK for follower %s: %s", followerID, expected)
-			}
-		}
-	}
-
-	
-	// If the leader receives a term higher than its current term, step down
-	if term > s.currentTerm {
-		s.currentTerm = term
-		s.currentState = FOLLOWER
-		s.leaderId = ""
-		s.votedFor = ""
-		return ERROR, nil, nil
-	}
-
-	// If the server is no longer the leader, return appropriate message
-	if s.currentState != LEADER {
-		return NOT_LEADER, nil, nil
-	}
-
-	// Handle unsuccessful AppendEntries response (log inconsistency)
-	if !success {
-		// Decrement nextIndex for the follower and retry
-		if l.nextIndex[followerID] > 0 {
-			l.nextIndex[followerID]--
-		}
-
-		nextIdx := l.nextIndex[followerID]
-		prevLogIndex := nextIdx - 1
-		prevLogTerm := -1
-		if prevLogIndex >= 0 && prevLogIndex < len(s.log) {
-			prevLogTerm = s.log[prevLogIndex].Term
-		}
-
-		entries := make([]LogEntry, 0)
-		if nextIdx < len(s.log) {
-			entries = append(entries, s.log[nextIdx])
-		}
-
-		retryRequest := &AppendEntriesRequest{
-			Term:         s.currentTerm,
-			LeaderID:     s.id,
-			PrevLogIndex: prevLogIndex,
-			PrevLogTerm:  prevLogTerm,
-			Entries:      entries,
-			LeaderCommit: s.commitIndex,
-		}
-		return RETRY_SEND, retryRequest, nil
-	}
-
-	// Update match and next indices for the follower
-	if _, exists := l.nextIndex[followerID]; !exists {
-		l.nextIndex[followerID] = 0
-	}
-	if _, exists := l.matchIndex[followerID]; !exists {
-		l.matchIndex[followerID] = 0
-	}
-
-	// The follower successfully replicated up to this index
-	lastReplicatedIndex := len(s.log) - 1
-	if lastReplicatedIndex > l.matchIndex[followerID] {
-		l.matchIndex[followerID] = lastReplicatedIndex
-		l.nextIndex[followerID] = lastReplicatedIndex + 1
-	}
-
-	// Determine new commit index
-	newCommitIndex := s.commitIndex
-	for index := s.commitIndex + 1; index <= len(s.log)-1; index++ {
-		if s.log[index].Term != s.currentTerm {
-			continue
-		}
-
-		count := 1 // Include leader's own log
-		for fid, matchIdx := range l.matchIndex {
-			if fid == s.id {
-				continue
-			}
-			if l.blacklisted[fid] {
-				continue
-			}
-			if matchIdx >= index {
-				count++
-			}
-		}
-
-		if count >= l.majority() {
+		if count >= s.majority {
 			newCommitIndex = index
 		} else {
 			break

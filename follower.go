@@ -3,19 +3,20 @@ package main
 import (
 	"strings"
 	"log"
+	"encoding/hex"
 )
 
 type Follower struct {
 	nextIndex  map[int]int
 	matchIndex map[int]int
+	byzantine  bool
 }
 
-const byzantineFollower = true
-
-func NewFollower() *Follower {
+func NewFollower(byzantine bool) *Follower {
 	return &Follower{
 		nextIndex:  map[int]int{},
 		matchIndex: map[int]int{},
+		byzantine:  byzantine, 
 	}
 }
 
@@ -30,6 +31,7 @@ func (f *Follower) BecomeCandidate(id string, currentTerm int, lastLogTerm int, 
 	return msg
 }
 
+/*
 func (f *Follower) AppendEntries(s *Server, msg AppendEntriesRequest) map[string]interface{} {
 	response := make(map[string]interface{})
 	response["reset_timeout"] = 0
@@ -57,7 +59,7 @@ func (f *Follower) AppendEntries(s *Server, msg AppendEntriesRequest) map[string
 		return response
 	}
 
-	if byzantineFollower {
+	if f.byzantine {
         response := map[string]interface{}{
             "term":          s.currentTerm,
             "success":       true,
@@ -80,6 +82,15 @@ func (f *Follower) AppendEntries(s *Server, msg AppendEntriesRequest) map[string
 		s.log = s.log[:index]
 	}
 	s.log = append(s.log, msg.Entries...)
+
+	prevHash := []byte(nil)
+	if msg.PrevLogIndex >= 0 {
+	  prevHash = s.log[msg.PrevLogIndex].Hash
+	}
+	entry := &s.log[index]
+	entry.Hash = computeEntryHash(prevHash, entry)
+
+	response["hash"] = hex.EncodeToString(entry.Hash)
 
 	if msg.LeaderCommit > s.commitIndex {
 		lastNew := msg.PrevLogIndex + len(msg.Entries)
@@ -112,6 +123,112 @@ func (f *Follower) AppendEntries(s *Server, msg AppendEntriesRequest) map[string
 
 	return response
 }
+*/
+
+func (f *Follower) AppendEntries(s *Server, msg AppendEntriesRequest) map[string]interface{} {
+	response := make(map[string]interface{})
+	response["reset_timeout"] = 0
+	response["term"] = s.currentTerm
+
+	// log.Printf("[FOLLOWER][%s] AppendEntries called | term=%d | entries=%d | byzantine=%v", s.id, msg.Term, len(msg.Entries), f.byzantine)
+
+	if msg.Term < s.currentTerm {
+		response["success"] = false
+		// log.Printf("[FOLLOWER][%s] Rejecting AppendEntries: term too old (msg.Term=%d < currentTerm=%d)", s.id, msg.Term, s.currentTerm)
+		return response
+	}
+
+	if s.currentState == LEADER && msg.Term == s.currentTerm {
+		response["success"] = false
+		// log.Printf("[FOLLOWER][%s] Rejecting AppendEntries: I am leader with same term", s.id)
+		return response
+	}
+
+	s.currentTerm = msg.Term
+	s.votedFor = ""
+	s.currentState = FOLLOWER
+	s.leaderId = msg.LeaderID
+	s.resetElectionTimeout()
+
+	if len(msg.Entries) == 0 {
+		response["success"] = true
+		response["reset_timeout"] = 1
+		// log.Printf("[FOLLOWER][%s] Heartbeat AppendEntries (no entries), responding success", s.id)
+		return response
+	}
+
+	if f.byzantine {
+		log.Printf("[BYZ][%s] ACK→true WITHOUT persist | term=%d | log entries=%d | kv=%v | commitIdx=%d",
+			s.id, s.currentTerm, len(s.log), s.stateMachine.kv, s.commitIndex,
+		)
+		response := map[string]interface{}{
+			"term":          s.currentTerm,
+			"success":       true,
+			"reset_timeout": 1,
+			"hash":  "deadbeef",
+		}
+		return response
+	}
+
+	// Validar log consistency
+	if msg.PrevLogIndex >= len(s.log) ||
+		(msg.PrevLogIndex >= 0 && s.log[msg.PrevLogIndex].Term != msg.PrevLogTerm) {
+		response["success"] = false
+		// log.Printf("[FOLLOWER][%s] Rejecting AppendEntries: log inconsistency prevLogIndex=%d, logLen=%d, prevLogTerm=%d", s.id, msg.PrevLogIndex, len(s.log), msg.PrevLogTerm)
+		return response
+	}
+
+	index := msg.PrevLogIndex + 1
+	if index < len(s.log) {
+		s.log = s.log[:index]
+	}
+	s.log = append(s.log, msg.Entries...)
+
+	prevHash := []byte(nil)
+	if msg.PrevLogIndex >= 0 {
+		prevHash = s.log[msg.PrevLogIndex].Hash
+	}
+	entry := &s.log[index]
+	entry.Hash = computeEntryHash(prevHash, entry)
+
+	hashStr := hex.EncodeToString(entry.Hash)
+	response["hash"] = hashStr
+	response["last_index"] = index
+
+	// log.Printf("[FOLLOWER][%s] Persisted entry index=%d term=%d hash=%s", s.id, index, entry.Term, hashStr)
+
+	if msg.LeaderCommit > s.commitIndex {
+		lastNew := msg.PrevLogIndex + len(msg.Entries)
+		if msg.LeaderCommit < lastNew {
+			s.commitIndex = msg.LeaderCommit
+		} else {
+			s.commitIndex = lastNew
+		}
+		for i := s.lastApplied + 1; i <= s.commitIndex; i++ {
+			entry := s.log[i]
+			parts := strings.Split(entry.Command, " ")
+			switch parts[0] {
+			case "write":
+				if len(parts) == 3 {
+					s.stateMachine.kv[parts[1]] = parts[2]
+				}
+			case "cas":
+				if len(parts) == 4 {
+					key, from, to := parts[1], parts[2], parts[3]
+					if v, ok := s.stateMachine.kv[key]; ok && v == from {
+						s.stateMachine.kv[key] = to
+					}
+				}
+			}
+			s.lastApplied = i
+		}
+	}
+	response["success"] = true
+
+	log.Printf("[FOLLOWER][%s] Responding AppendEntries success with hash=%s", s.id, hashStr)
+	return response
+}
+
 
 func (f *Follower) Vote(s *Server, msg RequestVoteRequest) map[string]interface{} {
 	response := make(map[string]interface{})

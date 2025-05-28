@@ -1,0 +1,146 @@
+package main
+
+import (
+	"strings"
+	"log"
+)
+
+type Follower struct {
+	nextIndex  map[int]int
+	matchIndex map[int]int
+}
+
+const byzantineFollower = true
+
+func NewFollower() *Follower {
+	return &Follower{
+		nextIndex:  map[int]int{},
+		matchIndex: map[int]int{},
+	}
+}
+
+func (f *Follower) BecomeCandidate(id string, currentTerm int, lastLogTerm int, lastLogIndex int) map[string]interface{} {
+	msg := map[string]interface{}{
+		"type":           "request_vote",
+		"term":           currentTerm,
+		"candidate_id":   id,
+		"last_log_index": lastLogIndex,
+		"last_log_term":  lastLogTerm,
+	}
+	return msg
+}
+
+func (f *Follower) AppendEntries(s *Server, msg AppendEntriesRequest) map[string]interface{} {
+	response := make(map[string]interface{})
+	response["reset_timeout"] = 0
+	response["term"] = s.currentTerm
+
+	if msg.Term < s.currentTerm {
+		response["success"] = false
+		return response
+	}
+
+	if s.currentState == LEADER && msg.Term == s.currentTerm {
+		response["success"] = false
+		return response
+	}
+
+	s.currentTerm = msg.Term
+	s.votedFor = ""
+	s.currentState = FOLLOWER
+	s.leaderId = msg.LeaderID
+	s.resetElectionTimeout()
+
+	if len(msg.Entries) == 0 {
+		response["success"] = true
+		response["reset_timeout"] = 1
+		return response
+	}
+
+	if byzantineFollower {
+        response := map[string]interface{}{
+            "term":          s.currentTerm,
+            "success":       true,
+            "reset_timeout": 1,
+        }
+			log.Printf("[BYZ][%s] ACK→true WITHOUT persist | term=%d | log=%+v | kv=%v | commitIdx=%d",
+            s.id, s.currentTerm, s.log, s.stateMachine.kv, s.commitIndex,
+        )
+        return response
+    }
+
+	if msg.PrevLogIndex >= len(s.log) ||
+		(msg.PrevLogIndex >= 0 && s.log[msg.PrevLogIndex].Term != msg.PrevLogTerm) {
+		response["success"] = false
+		return response
+	}
+
+	index := msg.PrevLogIndex + 1
+	if index < len(s.log) {
+		s.log = s.log[:index]
+	}
+	s.log = append(s.log, msg.Entries...)
+
+	if msg.LeaderCommit > s.commitIndex {
+		lastNew := msg.PrevLogIndex + len(msg.Entries)
+		if msg.LeaderCommit < lastNew {
+			s.commitIndex = msg.LeaderCommit
+		} else {
+			s.commitIndex = lastNew
+		}
+		for i := s.lastApplied + 1; i <= s.commitIndex; i++ {
+			entry := s.log[i]
+			parts := strings.Split(entry.Command, " ")
+			switch parts[0] {
+			case "write":
+				if len(parts) == 3 {
+					s.stateMachine.kv[parts[1]] = parts[2]
+				}
+			case "cas":
+				if len(parts) == 4 {
+					key, from, to := parts[1], parts[2], parts[3]
+					if v, ok := s.stateMachine.kv[key]; ok && v == from {
+						s.stateMachine.kv[key] = to
+					}
+				}
+			}
+			s.lastApplied = i
+
+		}
+	}
+	response["success"] = true
+
+	return response
+}
+
+func (f *Follower) Vote(s *Server, msg RequestVoteRequest) map[string]interface{} {
+	response := make(map[string]interface{})
+	if msg.Term < s.currentTerm {
+		response["term"] = s.currentTerm
+		response["vote_granted"] = false
+		return response
+	}
+	if msg.Term > s.currentTerm {
+		s.currentTerm = msg.Term
+		s.votedFor = ""
+		s.currentState = FOLLOWER
+	}
+	if s.votedFor == "" || s.votedFor == msg.CandidateID {
+		lastLogIndex := len(s.log) - 1
+		lastLogTerm := 0
+		if lastLogIndex >= 0 {
+			lastLogTerm = s.log[lastLogIndex].Term
+		}
+		if msg.LastLogTerm > lastLogTerm || (msg.LastLogTerm == lastLogTerm && msg.LastLogIndex >= lastLogIndex) {
+			s.votedFor = msg.CandidateID
+			response["vote_granted"] = true
+			s.resetElectionTimeout()
+		} else {
+			response["vote_granted"] = false
+		}
+	} else {
+		response["vote_granted"] = false
+	}
+	response["term"] = s.currentTerm
+	return response
+}

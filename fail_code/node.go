@@ -8,8 +8,6 @@ import (
 	"sync"
 	"time"
 	"log"
-	"crypto/sha256"
-	"encoding/binary"
 )
 
 // LogEntry represents an entry in the Raft log
@@ -20,19 +18,6 @@ type LogEntry struct {
 	// usado para retornar uma resposta a quem a mandou
 	Message     *MessageInternal
 	MessageFrom string // last node that sent the message to the leader
-	Hash        []byte `json:"hash"`    // Hash of the log entry
-}
-
-// computeEntryHash gera o hash encadeado (tipo Merkle-chain) da entry.
-func computeEntryHash(prevHash []byte, e *LogEntry) []byte {
-    h := sha256.New()
-    h.Write(prevHash)
-    // gravar o Term e o Command de forma determinística
-    termBytes := make([]byte, 8)
-    binary.BigEndian.PutUint64(termBytes, uint64(e.Term))
-    h.Write(termBytes)
-    h.Write([]byte(e.Command))
-    return h.Sum(nil)
 }
 
 // KeyValueStore is the state machine for the Raft system
@@ -127,9 +112,7 @@ func NewServer(id string, nodes []string,
 	candidateStartNewElection func(msg map[string]interface{})) *Server {
 	kv := &KeyValueStore{kv: map[string]string{}}
 	leader := NewLeader()
-	isByzantine := rand.Intn(2) == 0
-	log.Printf("[DEBUG_BOOL] Node %s isByzantine=%v", id, isByzantine)
-	follower := NewFollower(isByzantine)
+	follower := NewFollower()
 	s := &Server{
 		id:                  id,
 		nodes:               nodes,
@@ -273,11 +256,11 @@ type ConfirmedOperation struct {
 	Response      map[string]interface{} `json:"response"`
 }
 
-func (s *Server) WaitForReplication(followerID string, success bool, followerTerm int, followerHash string, followerLastLogIndex int) (MessageType, *AppendEntriesRequest, []ConfirmedOperation) {
+func (s *Server) WaitForReplication(followerID string, success bool, followerTerm int) (MessageType, *AppendEntriesRequest, []ConfirmedOperation) {
 	// println("\033[32mNode " + s.id + " is processing wait for replication\033[0m\n")
 	s.Lock()
 	defer s.Unlock()
-	return s.leader.WaitForReplication(s, followerID, success, followerTerm, followerHash, followerLastLogIndex)
+	return s.leader.WaitForReplication(s, followerID, success, followerTerm)
 }
 
 func (s *Server) Write(key string, value string, originalMessage *MessageInternal, msgFrom string) (MessageType, *AppendEntriesRequest, string) {

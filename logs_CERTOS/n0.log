@@ -1,0 +1,51 @@
+2025/05/28 12:08:57 init: nodeIDs=[n0 n1 n2], nodeID=n0
+2025/05/28 12:08:57 [DEBUG_BOOL] Node n0 isByzantine=false
+2025/05/28 12:08:57 [LEADER][n0] passou a líder
+2025/05/28 12:08:57 [LEADER][n0] passou a líder
+2025/05/28 12:08:57 [DEBUG] No entries to confirm for follower n1, heartbeat response
+2025/05/28 12:08:57 [DEBUG] No entries to confirm for follower n2, heartbeat response
+2025/05/28 12:08:57 [DEBUG] No entries to confirm for follower n1, heartbeat response
+2025/05/28 12:08:57 [DEBUG] No entries to confirm for follower n2, heartbeat response
+2025/05/28 12:08:57 [Byzantine] nó n2 marcado como bizantino: hash "deadbeef" ≠ "b02197caff9bf71cb0efc3dacecb025ed7604d37851f28c36ba80f39fa1ff802"
+2025/05/28 12:08:57 [DEBUG] Hash validation OK for follower n1: b02197caff9bf71cb0efc3dacecb025ed7604d37851f28c36ba80f39fa1ff802
+2025/05/28 12:08:57 [DEBUG] Hash validation OK for follower n1: 4397c5b4bddd3523a44af88b71ba8377b434369956ee9f44fae1b8a885b52a9e
+2025/05/28 12:08:57 [DEBUG] Hash validation OK for follower n1: d9fcd249fadc5d9bed32ca23acbfbd96b01064ed4e02a8aa619c2897588e4871
+2025/05/28 12:08:57 [DEBUG] Hash validation OK for follower n1: 974547afc4b28d206aeef286ddaa1e63233ecb8d177570b2d71a8cbbbd989c97
+2025/05/28 12:08:58 [DEBUG] Hash validation OK for follower n1: 3e675e0c08219a5343bcc49da0359cedbbbd0fd47250dbe578b490d3a6fdd497
+2025/05/28 12:08:58 [DEBUG] Hash validation OK for follower n1: eb544d7facfbfd69d4abb714e7261b26fa6504a63929a7f370a190fc69e1dcc4
+2025/05/28 12:08:58 [DEBUG] Hash validation OK for follower n1: 086987d8f8278885984c9e6a8fb76d843e924ec7c5da8bde67f785f4049846a4
+2025/05/28 12:08:59 [DEBUG] Hash validation OK for follower n1: a75c881de51b4ef5b254afda4937cadfdf506b66a54b0216c2434c74ec5006b6
+2025/05/28 12:08:59 [DEBUG] Hash validation OK for follower n1: ee4b19e156ecbf4c4771753d5e168c5ac08997793d314570605e2b2846789609
+2025/05/28 12:08:59 [DEBUG] Hash validation OK for follower n1: 69ac246e2ef8cbf2fb4266184ec67ff290c08aab5ac6d8075dfd0957d645c063
+2025/05/28 12:08:59 [DEBUG] Hash validation OK for follower n1: e7f2548739fab93bc5f9c62c85277c54e00ad959a500be96f0b19e7f9ebda900
+2025/05/28 12:09:00 [DEBUG] Hash validation OK for follower n1: 67a2e0d4f08562e921d3f6154517cd2e984d69d24a690bed378a6fe996dc9e46
+2025/05/28 12:09:00 [DEBUG] Hash validation OK for follower n1: b216a79e98fb5e31406636a9b7010c442db598a1d7ca8fba7ab37080b9f42874
+2025/05/28 12:09:00 [DEBUG] Hash validation OK for follower n1: 2fa51ce3058295ab81c20b63646aab24595607860e30f62961265775934ace4c
+2025/05/28 12:09:00 [DEBUG] Hash validation OK for follower n1: 0295c9e79d55938ffd9738e72198ad8cfa4ba5f7e3b9733a9ee97a48756fe560
+2025/05/28 12:09:00 [DEBUG] Hash validation OK for follower n1: 3def90f56f9092c7ee02da0a17e74cda82e309706e87ec1a5db1b88343900c60
+2025/05/28 12:09:00 [DEBUG] Hash validation OK for follower n1: 80d4eb72020aa960ae1b2e57e723fc72eb458a519a79f4c382ae2173fa5c5c66
+2025/05/28 12:09:00 [DEBUG] Hash validation OK for follower n1: 001f3cddcac865e68f5a11b13500f7f7b3b1c92a0f62783bcc02297bc3b29388
+2025/05/28 12:09:01 [DEBUG] Hash validation OK for follower n1: 1fbf9b6405a368eb8fb68499297052a6b6a6095574622fa1aed678b0c3748f8e
+2025/05/28 12:09:01 [DEBUG] Hash validation OK for follower n1: 29a0fea9a9c5096f9758af0f5bbe84c6e07cae89d62cbb8b81e9cc2301510051
+2025/05/28 12:09:01 [DEBUG] Hash validation OK for follower n1: c08ae55e9e7c414d0d9436f705f7c66d8a3b77ae1a0d7a86862a8b518f01418f
+2025/05/28 12:09:01 [DEBUG] Hash validation OK for follower n1: 9818aa3d8db082bf95588421ca23ce9730d99c4070b422f79fd0ecc448aced3d
+2025/05/28 12:09:01 [DEBUG] Hash validation OK for follower n1: 474bc684e819e1e7a3ea3026327f3f875e7b193549ea83ad072a365dcfce1317
+2025/05/28 12:09:02 [DEBUG] Hash validation OK for follower n1: e2e6a09a0d536718fd9a3e0cf36b198dda32e85407c0e0a89d03e6fa24cc28da
+2025/05/28 12:09:02 [DEBUG] Hash validation OK for follower n1: b63a2ff4e9c6f27a7cdf14c05e45e9775eec57584f752ef482f42963695799a0
+2025/05/28 12:09:02 [DEBUG] Hash validation OK for follower n1: 1ef19e787b0d8eedf3bd39c54fc1cd1063ea6a5ed9bf1db0da28c35650111b2c
+2025/05/28 12:09:03 [DEBUG] Hash validation OK for follower n1: bc457b42daddad8e5ba2d33e7fae37f20055277ae71fe43f0c5443a33ffb1e56
+2025/05/28 12:09:03 [DEBUG] Hash validation OK for follower n1: 0864925ab7d924d96cfaabfd7f5c46100276bb7470fa36a7b1ea5fee8f2011d2
+2025/05/28 12:09:03 [DEBUG] Hash validation OK for follower n1: 91a3ac697bd00769d756c6ec8fe96df5ae4affa05f6f2a7a08910615b89f35ea
+2025/05/28 12:09:04 [DEBUG] Hash validation OK for follower n1: 2e1a4c52de5014f3c831c9ed5c1fe788c52222ac292421b9c82a7a35f8fb091d
+2025/05/28 12:09:04 [DEBUG] Hash validation OK for follower n1: 6f353d6d33c0bc2247f8e66682e4b5e51580f0b1f71ac53dc4859c0272fe74af
+2025/05/28 12:09:04 [DEBUG] Hash validation OK for follower n1: 5a42d14354623ac6e47c535ae61d3001c11b3959e630e9c7915aca6190d1272d
+2025/05/28 12:09:04 [DEBUG] Hash validation OK for follower n1: 515406e9bfe1fb5832c5787e6970f39971168d01ba5d0f2ecea5ce44d1dcc014
+2025/05/28 12:09:04 [DEBUG] Hash validation OK for follower n1: 04043658af45eb2846c68982483d0d7af78bcb6d32a13dd195946ad201761e34
+2025/05/28 12:09:05 [DEBUG] Hash validation OK for follower n1: 002a649a5f93b2d255214e9ec7afa89944dada09757cfec9bdc8c31c9fa146d5
+2025/05/28 12:09:05 [DEBUG] Hash validation OK for follower n1: 4f338b074ec747022930d9da1c139e17fe281d68eb1376767c42c6a4e93453e0
+2025/05/28 12:09:05 [DEBUG] Hash validation OK for follower n1: 777fcf102430f32a268ed2a10fc41af0682b9d38d3154e11638a56f4aaac0762
+2025/05/28 12:09:05 [DEBUG] Hash validation OK for follower n1: ed87209b9458fef917a43171f2758dd92f820bda5bb0da386561cb1d3335de58
+2025/05/28 12:09:06 [DEBUG] Hash validation OK for follower n1: 9c0ea9e425a5874aaadbf1d8e5f3e0fe344d0ecae2e70fbe6ce7ef21279b9a93
+2025/05/28 12:09:06 [DEBUG] Hash validation OK for follower n1: 23bed978302ec818bbfad308697b915f4ffc3dd538481d4a1b34ad78b5d7a41f
+2025/05/28 12:09:06 [DEBUG] Hash validation OK for follower n1: f19ddefa80864dabe7ad5446bca1a92724f4ea1743253ac7f25a60e8576ea59b
+2025/05/28 12:09:06 [DEBUG] Hash validation OK for follower n1: e7f3499019a8a03792bc3f58b3202ff07773b5ec4e64af240cf8f353123f08da
