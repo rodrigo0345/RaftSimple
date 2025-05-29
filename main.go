@@ -341,6 +341,47 @@ func main() {
 			server.Lock()
 			server.HandleLogDigest(body, msg.Src)
 			server.Unlock()
+		case "request_log_sync":
+			server.Lock()
+			index := int(body["index"].(float64))
+			requestor := body["requestor"].(string)
+			var entry LogEntry
+			if index >= 0 && index < len(server.log) {
+				entry = server.log[index]
+			}
+			msg := map[string]interface{}{
+				"type":  "log_sync_response",
+				"index": index,
+				"entry": entry,
+			}
+			send(server.id, requestor, msg, nil)
+			server.Unlock()
+		case "log_sync_response":
+			server.Lock()
+			index := int(body["index"].(float64))
+			var entry LogEntry
+			data, _ := json.Marshal(body["entry"])
+			json.Unmarshal(data, &entry)
+			if index < len(server.log) && entry.Index == index {
+				server.log[index] = entry
+				log.Printf("[Follower %s] Updated log entry at index=%d with command=%s, hash=%x", server.id, index, entry.Command, entry.Cumulative[:8])
+				// Recalcular hashes cumulativas para entradas subsequentes
+				for i := index; i < len(server.log); i++ {
+					var prevHash [32]byte
+					if i > 0 {
+						prevHash = server.log[i-1].Cumulative
+					}
+					hashInput := append(prevHash[:], []byte(fmt.Sprintf("%d|%s", server.log[i].Term, server.log[i].Command))...)
+					server.log[i].Cumulative = sha256.Sum256(hashInput)
+				}
+				// Atualizar validatedIndex se todas as entradas até ownLastIndex forem validadas
+				lastIndex := len(server.log) - 1
+				if index == lastIndex {
+					server.validatedIndex = lastIndex
+					log.Printf("[Follower %s] All entries validated up to index=%d", server.id, server.validatedIndex)
+				}
+			}
+			server.Unlock()
 		}
 	}
 	if err := scanner.Err(); err != nil {

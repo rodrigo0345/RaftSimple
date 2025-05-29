@@ -98,9 +98,11 @@ type Server struct {
 	pendingRequests     map[int]PendingRequest
 	leaderHeartbeatFunc func(msg map[string]interface{})
 	// Digest exchange state
-	digestTimer     *time.Timer
-	currentNeighbor int      // Index for round-robin neighbor selection
-	neighborNodes   []string // Sorted list of other nodes
+	digestTimer       *time.Timer
+	currentNeighbor   int      // Index for round-robin neighbor selection
+	neighborNodes     []string // Sorted list of other nodes
+	pendingValidation bool
+	validatedIndex    int
 }
 
 func (s *Server) Lock() {
@@ -147,10 +149,13 @@ func NewServer(id string, nodes []string,
 		mutex:               &sync.Mutex{},
 		pendingRequests:     make(map[int]PendingRequest),
 		leaderHeartbeatFunc: leaderHeartbeatFunc,
-		digestTimer:         time.NewTimer(time.Millisecond * 500),
+		digestTimer:         time.NewTimer(time.Millisecond * 10),
 		currentNeighbor:     0,
 		neighborNodes:       neighborNodes,
+		pendingValidation:   true,
+		validatedIndex:      -1,
 	}
+	log.Printf("[%s] Initialized digest timer with 10ms interval", s.id)
 	s.candidate = NewCandidate(s)
 
 	go func() {
@@ -213,7 +218,8 @@ func (s *Server) resetLeaderTimeout() {
 }
 
 func (s *Server) resetDigestTimer() {
-	s.digestTimer.Reset(time.Millisecond * 100)
+	s.digestTimer.Reset(time.Millisecond * 10)
+	log.Printf("[%s] Reset digest timer to 10ms", s.id)
 }
 
 // PrintCommittedLog prints the committed log entries up to commitIndex
@@ -297,14 +303,35 @@ func (s *Server) HandleLogDigest(msg map[string]interface{}, src string) {
 	if ownLastIndex >= 0 {
 		ownHash = s.log[ownLastIndex].Cumulative
 	}
-	log.Printf("Received digest request index=%d, ownHash=%x, theirHash=%x", ownLastIndex, ownHash[:8], hash[:8])
-	if int(lastIndex) == ownLastIndex && hash != ownHash {
-		log.Printf("[%s] Detected log divergence with: index=%d, ownHash=%x, theirHash=%x",
-			s.id, ownLastIndex, ownHash[:8], hash[:8])
+	log.Printf("[Follower %s] Processing log_digest from %s: received index=%d, hash=%x; own index=%d, hash=%x", s.id, src, int(lastIndex), hash[:8], ownLastIndex, ownHash[:8])
+	if int(lastIndex) == ownLastIndex && hash == ownHash {
+		s.validatedIndex = ownLastIndex
+		log.Printf("[Follower %s] Log validated with %s: validatedIndex updated to %d", s.id, src, s.validatedIndex)
+	} else if int(lastIndex) == ownLastIndex && hash != ownHash {
+		log.Printf("[Follower %s] Log divergence detected with %s: index=%d, ownHash=%x, theirHash=%x", s.id, src, ownLastIndex, ownHash[:8], hash[:8])
+		// Solicitar sincronização para todas as entradas desde validatedIndex+1
+		startIndex := s.validatedIndex + 1
+		if startIndex < 0 {
+			startIndex = 0
+		}
+		for i := startIndex; i <= ownLastIndex; i++ {
+			msg := map[string]interface{}{
+				"type":      "request_log_sync",
+				"index":     i,
+				"requestor": s.id,
+			}
+			log.Printf("[Follower %s] Requesting log sync for index=%d from %s", s.id, i, src)
+			send(s.id, src, msg, nil)
+		}
 		s.currentState = CANDIDATE
 		s.leaderId = ""
 		s.votedFor = ""
 		s.timer.Reset(0)
+	}
+
+	if int(lastIndex) == ownLastIndex && hash == ownHash {
+		s.validatedIndex = ownLastIndex
+		s.pendingValidation = false
 	}
 }
 

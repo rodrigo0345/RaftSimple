@@ -87,14 +87,18 @@ func (f *Follower) AppendEntries(s *Server, msg AppendEntriesRequest) map[string
 	log.Printf("[Follower %s] Appended %d entries, new log length: %d\n", s.id, len(msg.Entries), len(s.log))
 
 	// podemos dar commit a mais mensagens, caso o lider tenha dado commit a mensagens que o follower não deu
-	if msg.LeaderCommit > s.commitIndex {
+	if msg.LeaderCommit > s.commitIndex && !s.pendingValidation {
 		lastNewEntryIndex := msg.PrevLogIndex + len(msg.Entries)
-		if msg.LeaderCommit < lastNewEntryIndex {
-			s.commitIndex = msg.LeaderCommit
-		} else {
-			s.commitIndex = lastNewEntryIndex
+		newCommitIndex := msg.LeaderCommit
+		if msg.LeaderCommit > lastNewEntryIndex {
+			newCommitIndex = lastNewEntryIndex
 		}
-		log.Printf("[Follower %s] Updated commitIndex to %d\n", s.id, s.commitIndex)
+		if newCommitIndex > s.validatedIndex {
+			log.Printf("[Follower %s] Commit delayed: newCommitIndex=%d exceeds validatedIndex=%d", s.id, newCommitIndex, s.validatedIndex)
+		} else {
+			s.commitIndex = newCommitIndex
+			log.Printf("[Follower %s] Updated commitIndex to %d", s.id, s.commitIndex)
+		}
 
 		// aplica tudo que tenha sido commit à máquina de estados do follower, não aplica read
 		for i := s.lastApplied + 1; i <= s.commitIndex; i++ {
