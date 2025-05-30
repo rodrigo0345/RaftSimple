@@ -87,6 +87,7 @@ type Server struct {
 	stateMachine        *KeyValueStore
 	leaderId            string
 	timer               *time.Timer
+	electionTimerN1     *time.Timer
 	mutex               *sync.Mutex
 	pendingRequests     map[int]PendingRequest // Added to track client requests
 	leaderHeartbeatFunc func(msg map[string]interface{})
@@ -127,14 +128,27 @@ func NewServer(id string, nodes []string,
 		stateMachine:        kv,
 		leaderId:            "",
 		timer:               time.NewTimer(time.Millisecond * time.Duration(rand.Intn(150)+150)),
+		electionTimerN1:     nil,
 		mutex:               &sync.Mutex{},
 		pendingRequests:     make(map[int]PendingRequest),
 		leaderHeartbeatFunc: leaderHeartbeatFunc,
 	}
 	s.candidate = NewCandidate(s) // Pass server instance to Candidate
 
-	// wait for replication of the votes
-	// time.Sleep(time.Millisecond * time.Duration(rand.Intn(150)))
+	// Start a secondary timer for n1 to trigger election after 5 seconds
+	if id == "n1" {
+		s.electionTimerN1 = time.NewTimer(5 * time.Second)
+		go func() {
+			<-s.electionTimerN1.C
+			s.Lock()
+			if s.currentState == FOLLOWER {
+				println("\n[31mNode n1 secondary timer expired, triggering election\n[0m")
+				s.becomeCandidate(candidateStartNewElection)
+				s.resetElectionTimeout()
+			}
+			s.Unlock()
+		}()
+	}
 
 	go func() {
 		for {
@@ -142,7 +156,7 @@ func NewServer(id string, nodes []string,
 			s.Lock()
 			switch s.currentState {
 			case FOLLOWER:
-				// println("\\033[31mTIMER GOT RESETED, NO LEADER CONTACTED\\033[0m")
+				// println("\033[31mTIMER GOT RESETED, NO LEADER CONTACTED\033[0m")
 				s.becomeCandidate(candidateStartNewElection)
 				s.resetElectionTimeout()
 				s.Unlock()
@@ -154,7 +168,7 @@ func NewServer(id string, nodes []string,
 				s.Unlock()
 				break
 			case LEADER:
-				// println("\\033[31mLEADER IS SENDING ANOTHER HEARTBEAT\\033[0m")
+				// println("\033[31mLEADER IS SENDING ANOTHER HEARTBEAT\033[0m")
 				msg := s.leader.GetHeartbeatMessage(s, s.id)
 				s.resetLeaderTimeout()
 				s.Unlock()
@@ -163,7 +177,6 @@ func NewServer(id string, nodes []string,
 			default:
 				s.Unlock()
 			}
-
 		}
 	}()
 	if nodeIDs[0] == s.id {

@@ -9,7 +9,7 @@ cd ../TF/RaftTry; go build; cd ../../maelstrom
 Simple test:
 
 ```sh
-./maelstrom test -w lin-kv --bin ../TF/RaftTry/paxos-try --time-limit 10 --concurrency 4 --node-count=2
+./maelstrom test -w lin-kv --bin ../TF/RaftSimple/paxos-try --time-limit 10 --concurrency 6 --node-count=3 --rate 100
 ```
 
 Robust test:
