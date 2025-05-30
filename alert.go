@@ -7,21 +7,18 @@ import (
 	"strconv"
 )
 
-// PendingEntry holds an alert and the set of nodes that confirmed it
 type PendingEntry struct {
 	alert       EquivocationAlert
 	confirmedBy map[string]bool
 	rejectedBy  map[string]bool
 }
 
-// EquivocationDB manages equivocation alerts and their confirmations
 type EquivocationDB struct {
 	pendingEntries map[string]PendingEntry // Key is leader:index:term:localHash:remoteHash
 	bannedLeaders  map[string]bool
 	majority       int // Number of nodes required for a majority
 }
 
-// NewEquivocationDB initializes the EquivocationDB with a majority count
 func NewEquivocationDB(nodes []string) *EquivocationDB {
 	majority := len(nodes)/2 + 1
 	return &EquivocationDB{
@@ -31,7 +28,6 @@ func NewEquivocationDB(nodes []string) *EquivocationDB {
 	}
 }
 
-// EquivocationAlert represents a detected equivocation by the leader
 type EquivocationAlert struct {
 	LeaderID        string
 	Index           int
@@ -44,8 +40,6 @@ type EquivocationAlert struct {
 	Command         string
 }
 
-// ProcessAlert validates an alert and updates confirmation counts
-// ta tudo mal
 func (edb *EquivocationDB) ProcessAlert(alert EquivocationAlert, senderID string) map[string]interface{} {
 	// Generate a unique key including both hashes to identify this specific conflict
 	key := alert.LeaderID + ":" +
@@ -54,12 +48,10 @@ func (edb *EquivocationDB) ProcessAlert(alert EquivocationAlert, senderID string
 		alert.LocalHash + ":" +
 		alert.RemoteHash
 
-	// Validate the alert
 	if err := ValidateAlert(alert); err != nil {
 		edb.pendingEntries[key].rejectedBy[senderID] = true
 	}
 
-	// If the alert doesn't exist, initialize it
 	if _, exists := edb.pendingEntries[key]; !exists {
 		edb.pendingEntries[key] = PendingEntry{
 			alert:       alert,
@@ -68,10 +60,8 @@ func (edb *EquivocationDB) ProcessAlert(alert EquivocationAlert, senderID string
 		}
 	}
 
-	// Add the sender to the confirmation set if not already present
 	if !edb.pendingEntries[key].confirmedBy[senderID] {
 		edb.pendingEntries[key].confirmedBy[senderID] = true
-		// Check if the number of confirmations has reached the majority
 		if len(edb.pendingEntries[key].confirmedBy) >= edb.majority {
 			println("Leader", alert.LeaderID, "is suspicious for index", alert.Index, "term", alert.Term)
 			// Here, the system can start ignoring the leader or trigger a new election
@@ -114,7 +104,6 @@ func (edb *EquivocationDB) NewEquivocationAlertIfApplicable(entry LogEntry, lead
 	return nil, nil
 }
 
-// NewEquivocationAlert creates an alert from conflicting entries
 func NewEquivocationAlert(leaderID string, idx, term int, local, remote LogEntry, pending []LogEntry) EquivocationAlert {
 	return EquivocationAlert{
 		LeaderID:        leaderID,
@@ -137,7 +126,6 @@ func hashEntry(e LogEntry) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// ToRPCMessage converts the alert to a generic format for sending
 func (a EquivocationAlert) ToRPCMessage() map[string]interface{} {
 	return map[string]interface{}{
 		"type":       "equivocation_alert",
@@ -155,14 +143,12 @@ func ValidateAlert(a EquivocationAlert) error {
 	if a.LocalHash == a.RemoteHash {
 		return errors.New("no conflict: identical hashes")
 	}
-	// In a real system, verify signatures; here, just check presence
 	if a.LocalSignature == "" || a.RemoteSignature == "" {
 		return errors.New("missing signature in at least one version")
 	}
 	return nil
 }
 
-// CountKey returns a unique key for tracking alerts
 func (a EquivocationAlert) CountKey() string {
 	return a.LeaderID + ":" +
 		strconv.Itoa(a.Index) + ":" +

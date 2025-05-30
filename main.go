@@ -310,7 +310,6 @@ func main() {
 				break
 			}
 
-			// Send response with optional original message
 			if clientMsg != nil {
 				send(server.id, msg.Src, respBody, clientMsg)
 			} else {
@@ -342,16 +341,12 @@ func main() {
 					"leader_commit":  newMsg.LeaderCommit,
 				}, clientMsg)
 			} else {
-				// Process confirmed operations
 				for _, op := range confirmedOps {
 					if op.ClientMessage == nil {
-						// println("No client message for confirmed operation")
 						continue
 					}
 
-					// Send the response to the client
 					reply(*op.ClientMessage, op.Response)
-					// println("Responded to client with:", op.Response["type"])
 				}
 			}
 			break
@@ -405,7 +400,6 @@ func main() {
 			term := int(body["term"].(float64))
 			matches := body["matches_local"].(bool)
 
-			// Generate key for tracking
 			key := fmt.Sprintf("%s:%d:%d", leaderID, index, term)
 			server.Lock()
 
@@ -417,7 +411,6 @@ func main() {
 				}
 			}
 
-			// Update counts based on response
 			if matches {
 				server.pendingAlerts[key].SupportLeader++
 			} else {
@@ -427,9 +420,8 @@ func main() {
 			alert := server.pendingAlerts[key]
 
 			if alert.SupportLeader >= server.majority {
-				// Majority supports leader's entry, accept pending append_entries
+				// Maioria suporta o líder, então temos de aplicar entradas pendentes
 				if pendingMsg, ok := server.pendingAppendEntries[key]; ok {
-					// Apply the pending entries
 					startIndex := pendingMsg.PrevLogIndex + 1
 					for i, entry := range pendingMsg.Entries {
 						idx := startIndex + i
@@ -440,7 +432,6 @@ func main() {
 						}
 					}
 
-					// Update commitIndex
 					if pendingMsg.LeaderCommit > server.commitIndex {
 						server.commitIndex = min(pendingMsg.LeaderCommit, len(server.log)-1)
 					}
@@ -463,7 +454,6 @@ func main() {
 						server.lastApplied = i
 					}
 
-					// Send append_entries_ok with success=true
 					response := map[string]interface{}{
 						"type":    "append_entries_ok",
 						"term":    server.currentTerm,
@@ -471,20 +461,18 @@ func main() {
 					}
 					send(server.id, pendingMsg.LeaderID, response, nil)
 
-					// Clean up
 					delete(server.pendingAppendEntries, key)
 					delete(server.pendingAlerts, key)
 				}
 			} else if alert.AgainstLeader >= server.majority {
-				// Majority detects discrepancy, trigger election
+				// colocar o lider na lista de líderes banidos
 				server.follower.equivocationDB.BanLeader(leaderID)
-
-				// ban leader
 				electionMsg := server.candidate.StartElection(server.id)
+
 				server.Unlock()
 				candidateStartNewElection(electionMsg)
-				// Clean up
 				server.Lock()
+
 				delete(server.pendingAppendEntries, key)
 				delete(server.pendingAlerts, key)
 			}
