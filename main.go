@@ -363,6 +363,7 @@ func main() {
 			respBody := server.AppendEntries(ap)
 			respBody["type"] = "append_entries_ok"
 
+			log.Printf("CommitIX: %d", server.commitIndex)
 			// Send response with optional original message
 			if clientMsg != nil {
 				send(server.id, msg.Src, respBody, clientMsg)

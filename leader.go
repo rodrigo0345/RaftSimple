@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"strconv"
 	"strings"
 )
@@ -29,6 +30,7 @@ func (l *Leader) GetHeartbeatMessage(s *Server, id string) map[string]interface{
 		prevLogIndex = len(s.log) - 1
 		prevLogTerm = s.log[prevLogIndex].Term
 	}
+	log.Printf("CommitIX: %d", s.commitIndex)
 
 	return map[string]interface{}{
 		"type":           "append_entries",
