@@ -149,7 +149,7 @@ func NewServer(id string, nodes []string,
 		mutex:               &sync.Mutex{},
 		pendingRequests:     make(map[int]PendingRequest),
 		leaderHeartbeatFunc: leaderHeartbeatFunc,
-		digestTimer:         time.NewTimer(time.Millisecond * 10),
+		digestTimer:         time.NewTimer(time.Millisecond * 500),
 		currentNeighbor:     0,
 		neighborNodes:       neighborNodes,
 		pendingValidation:   true,
@@ -218,7 +218,7 @@ func (s *Server) resetLeaderTimeout() {
 }
 
 func (s *Server) resetDigestTimer() {
-	s.digestTimer.Reset(time.Millisecond * 10)
+	s.digestTimer.Reset(time.Millisecond * 500)
 	log.Printf("[%s] Reset digest timer to 10ms", s.id)
 }
 
@@ -249,7 +249,6 @@ func (s *Server) sendLogDigest() {
 		}
 	}
 	if len(neighborNodes) == 0 {
-		// If no neighbors (e.g., only node or all are leader/self), skip
 		return
 	}
 	// Update neighborNodes and reset currentNeighbor if needed

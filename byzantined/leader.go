@@ -145,7 +145,7 @@ func (l *Leader) WaitForReplication(s *Server, followerID string, success bool, 
 		return NOT_LEADER, nil, nil
 	}
 
-	// Handle unsuccessful AppendEntries response (log inconsistency)
+	// Handle unsuccessful AppendEntries response
 	if !success {
 		// Decrement nextIndex for the follower and retry
 		if l.nextIndex[followerID] > 0 {
@@ -197,7 +197,7 @@ func (l *Leader) WaitForReplication(s *Server, followerID string, success bool, 
 			continue
 		}
 
-		count := 1 // Include leader's own log
+		count := 1 // Include leaders own log
 		for fid, matchIdx := range l.matchIndex {
 			if fid != s.id && matchIdx >= index {
 				count++
@@ -216,7 +216,7 @@ func (l *Leader) WaitForReplication(s *Server, followerID string, success bool, 
 	if newCommitIndex > s.commitIndex {
 		s.commitIndex = newCommitIndex
 
-		// Apply all committed entries that haven't been applied yet
+		// Apply all committed entries that havent been applied yet
 		for i := s.lastApplied + 1; i <= s.commitIndex; i++ {
 			entry := s.log[i]
 			parts := strings.Split(entry.Command, " ")
@@ -291,7 +291,7 @@ func (l *Leader) WaitForReplication(s *Server, followerID string, success bool, 
 				}
 			}
 
-			// Record the confirmed operation only if we have a client message and haven't responded yet
+			// Record the confirmed operation only if we have a client message and havent responded yet
 			if response != nil && entry.Message != nil && !l.respondedMessages[entry.Message] {
 				confirmedOp := ConfirmedOperation{
 					ClientMessage: entry.Message,

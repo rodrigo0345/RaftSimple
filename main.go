@@ -365,7 +365,7 @@ func main() {
 			if index < len(server.log) && entry.Index == index {
 				server.log[index] = entry
 				log.Printf("[Follower %s] Updated log entry at index=%d with command=%s, hash=%x", server.id, index, entry.Command, entry.Cumulative[:8])
-				// Recalcular hashes cumulativas para entradas subsequentes
+				// Recalcular hashes
 				for i := index; i < len(server.log); i++ {
 					var prevHash [32]byte
 					if i > 0 {
