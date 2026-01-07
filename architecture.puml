@@ -1,0 +1,70 @@
+@startuml
+!theme plain
+
+class Server {
+  +id: string
+  +nodes: []string
+  +currentState: State
+  +currentTerm: int
+  +votedFor: string
+  +log: []LogEntry
+  +commitIndex: int
+  +lastApplied: int
+  +leaderId: string
+  --
+  +Lock()
+  +Unlock()
+  +SwitchToFollower(term int)
+  +SwitchToCandidate()
+  +SwitchToLeader()
+}
+
+enum State {
+  FOLLOWER
+  CANDIDATE
+  LEADER
+}
+
+class Leader {
+  +nextIndex: map[string]int
+  +matchIndex: map[string]int
+  --
+  +GetHeartbeatMessage()
+  +Read()
+  +Write()
+  +Cas()
+  +WaitForReplication()
+}
+
+class Candidate {
+  +votes: map[string]bool
+  --
+  +RequestVote()
+}
+
+class Follower {
+  --
+  +HandleAppendEntries()
+  +HandleRequestVote()
+}
+
+class KeyValueStore {
+  -kv: map[string]string
+  --
+  +ToString()
+}
+
+class LogEntry {
+  +Term: int
+  +Index: int
+  +Command: string
+}
+
+Server o-- State
+Server "1" *-- "1" KeyValueStore
+Server "1" *-- "0..*" LogEntry
+Server --> Leader : delegates to
+Server --> Candidate : delegates to
+Server --> Follower : delegates to
+
+@enduml
